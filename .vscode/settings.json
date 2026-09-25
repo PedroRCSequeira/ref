@@ -1,0 +1,11 @@
+{
+    "terminal.integrated.scrollback": 2500,
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.patterns": {
+        "0_raw_data.py": "data_*",
+        "1_core.md": "audit.py, runner.py, monte_carlo.py, tune_parameters*.py",
+        "7_visuals.md": "reporting.py, visuals_export.py",
+        "5_tune.md": "tun*.py",
+        "2_engines.md": "baseline_engines.py, custom_methods.py, electoral_metrics.py"
+    }
+}
