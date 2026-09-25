@@ -52,21 +52,44 @@ def analyze_inversions(votes_map: Dict[str, Dict[str, int]], allocations_map: Di
     total_inversion_pairs = 0  
     affected_districts = set()
     detailed_logs = []
-    
+
     for d in votes_map.keys():
-        for pA in parties_lst:
-            for pB in parties_lst:
-                if pA == pB: continue
+        has_plus = {p: False for p in parties_lst}
+        has_minus = {p: False for p in parties_lst}
+        num_parties = len(parties_lst)
+
+        for i in range(num_parties):
+            pA = parties_lst[i]
+            for j in range(i + 1, num_parties):
+                pB = parties_lst[j]
+
                 if votes_map[d][pA] > votes_map[d][pB] and allocations_map[d][pA] < allocations_map[d][pB]:
-                    if not marks[d][pA] and not marks[d][pB]:
-                        marks[d][pA] = "-"
-                        marks[d][pB] = "+"
-                        total_inversion_pairs += 1  
-                        affected_districts.add(d)
-                        detailed_logs.append(
-                            f"    - Intra-District '{d}': {pA} had more votes ({votes_map[d][pA]:,}) than {pB} ({votes_map[d][pB]:,}) but received fewer seats ({allocations_map[d][pA]} vs {allocations_map[d][pB]})."
-                        )
-                        
+                    has_minus[pA] = True
+                    has_plus[pB] = True
+                    total_inversion_pairs += 1
+                    affected_districts.add(d)
+                    detailed_logs.append(
+                        f"    - Intra-District '{d}': {pA} had more votes ({votes_map[d][pA]:,}) than {pB} ({votes_map[d][pB]:,}) but received fewer seats ({allocations_map[d][pA]} vs {allocations_map[d][pB]})."
+                    )
+                elif votes_map[d][pB] > votes_map[d][pA] and allocations_map[d][pB] < allocations_map[d][pA]:
+                    has_minus[pB] = True
+                    has_plus[pA] = True
+                    total_inversion_pairs += 1
+                    affected_districts.add(d)
+                    detailed_logs.append(
+                        f"    - Intra-District '{d}': {pB} had more votes ({votes_map[d][pB]:,}) than {pA} ({votes_map[d][pA]:,}) but received fewer seats ({allocations_map[d][pB]} vs {allocations_map[d][pA]})."
+                    )
+
+        for p in parties_lst:
+            if has_plus[p] and has_minus[p]:
+                marks[d][p] = "+-"
+            elif has_plus[p]:
+                marks[d][p] = "+"
+            elif has_minus[p]:
+                marks[d][p] = "-"
+            else:
+                marks[d][p] = ""
+
     analysis_str = f"Detected {total_inversion_pairs} intra-district inversion pair(s) across {len(affected_districts)} district(s)."
     return marks, analysis_str, total_inversion_pairs, detailed_logs
 

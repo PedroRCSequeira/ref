@@ -62,7 +62,7 @@ def parse_stacked_country_file(file_path: str) -> Dict[str, Dict[str, Any]]:
         "total votes", "totais_votos", "totais votos", "sum votes", "gesamttotal_votos"
     }
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, "r", encoding="utf-8-sig") as f:   # FIX: utf-8-sig
         lines = f.readlines()
         
     idx = 0
@@ -92,7 +92,8 @@ def parse_stacked_country_file(file_path: str) -> Dict[str, Dict[str, Any]]:
             total_keywords = ["totais", "total", "total_votes", "totais_votos", "sum", "stimmen_total", "votos_totais"]
             
             for i, h in enumerate(header_parts):
-                h_clean = h.lower()
+                # FIX: normalise header names
+                h_clean = re.sub(r'[^a-z0-9]+', '_', h.lower()).strip('_')
                 if h_clean in mandate_keywords:
                     mandatos_idx = i
                 elif h_clean in total_keywords:

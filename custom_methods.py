@@ -20,7 +20,6 @@ DEFAULT_PROGRESSIVE_PHASE1_COUNT = 4
 DEFAULT_PROGRESSIVE_PHASE2_STEP = 4
 DEFAULT_PROGRESSIVE_PHASE2_COUNT = 7
 DEFAULT_PROGRESSIVE_PHASE3_STEP = 10
-# the absolute best version with 2 extra gaps produced weighted gallagher 6.1 and inversion 0.69 for the PTdata 2015-2025
 
 
 # ==============================================================================
@@ -305,20 +304,27 @@ def allocate_two_speed_pool_method(
         if total_allocated >= max_needed:
             break
 
+        step_idx += 1
         d, p = item["District"], item["Party"]
         district_full = district_won[d] >= district_caps[d]
         party_full = party_won[p] >= party_caps[p]
         round1_cap_reached = final_allocations[d][p] >= round1_district_cap
 
-        if district_full or party_full or round1_cap_reached:
-            continue
-
-        step_idx += 1
-        item["_used"] = True
-        final_allocations[d][p] += 1
-        party_won[p] += 1
-        district_won[d] += 1
-        total_allocated += 1
+        if district_full and party_full:
+            status = "No - Both Caps Reached"
+        elif district_full:
+            status = "No - District Cap Reached"
+        elif party_full:
+            status = "No - National Party Cap Reached"
+        elif round1_cap_reached:
+            status = "No - Round 1 District Cap Reached"
+        else:
+            status = "Yes"
+            item["_used"] = True
+            final_allocations[d][p] += 1
+            party_won[p] += 1
+            district_won[d] += 1
+            total_allocated += 1
 
         history_log.append({
             "Step": step_idx,
@@ -327,7 +333,7 @@ def allocate_two_speed_pool_method(
             "Quotient": item["Quotient"],
             "Divisor": item["Divisor Used"], 
             "Seat Attempt": item["Seat Attempt #"],
-            "Allocated": "Yes",
+            "Allocated": status,
             "Running Total": total_allocated
         })
 

@@ -1,0 +1,3586 @@
+This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching these patterns are excluded: **/*.csv, **/*.json, **/*.log, z_data_storage/**, **/.env*, **/venv/**, **/.venv/**, **/.vscode/**, **/*.pem, **/*.key
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+portugal_trends/
+  TREND_Displacement_Magnitude.png
+  TREND_Geographic_Footprint.png
+  TREND_Global_Dominance_Pairs.png
+  TREND_Global_Local_Dips.png
+  TREND_Intra_District_Inversions.png
+  TREND_Unweighted_Gallagher.png
+  TREND_Weighted_Gallagher.png
+0_raw_data.py
+1_core.md
+2_engines.md
+5_tune.md
+7_visuals.md
+audit.py
+baseline_engines.py
+config.py
+custom_methods.py
+data_parser.py
+electoral_metrics.py
+main.py
+monte_carlo.py
+reporting.py
+runner.py
+tune_2_speed.py
+tune_3_speed_formula_broad.py
+tune_non_formula_tight.py
+tune_non_formula.py
+tuning_engine.py
+visuals_export.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="0_raw_data.py">
+
+</file>
+
+<file path="1_core.md">
+
+</file>
+
+<file path="2_engines.md">
+
+</file>
+
+<file path="5_tune.md">
+
+</file>
+
+<file path="7_visuals.md">
+
+</file>
+
+<file path="audit.py">
+import glob
+import os
+from typing import Any, Dict, Tuple
+
+from baseline_engines import get_national_party_caps
+from config import GREEN, RED, RESET, SUPPORTED_REGIONS
+from data_parser import parse_stacked_country_file
+
+
+def audit_datasets() -> Tuple[Dict[str, Dict[str, Any]], int, int]:
+    """
+    Scans for data_*.csv files, parses them, validates structural seat caps
+    and vote sums upfront, returning parsed dataset cache and global counters.
+    """
+    input_files = sorted(glob.glob("data_*.csv"))
+    if not input_files:
+        print(f"{RED}Error: No country datasets found matching pattern 'data_*.csv'.{RESET}")
+        raise FileNotFoundError("No matching input CSV files found.")
+
+    all_datasets = {}
+    validation_errors = []
+    global_max_possible_coverage = 0
+    historical_election_count = 0
+
+    print("🔍 Launching Upfront Dataset Integrity Audits...")
+
+    for file_path in input_files:
+        filename = os.path.basename(file_path)
+        country_name = filename.replace("data_", "").replace(".csv", "").strip().title()
+
+        if country_name.lower() not in SUPPORTED_REGIONS:
+            print("\n" + "!" * 80)
+            print(f"❌ {RED}PROTECTION STOP: UNSUPPORTED REGION DETECTED ('{country_name}'){RESET}")
+            print("!" * 80 + "\n")
+            raise ValueError(f"Aborted: Region '{country_name}' is missing configured system rules.")
+
+        elections_archive = parse_stacked_country_file(file_path)
+        all_datasets[file_path] = {
+            "country_name": country_name,
+            "filename": filename,
+            "archive": elections_archive
+        }
+
+        for year, dataset in elections_archive.items():
+            historical_election_count += 1
+            votes = dataset["votes"]
+            district_caps = dataset["district_caps"]
+            total_votes_cast = dataset["total_votes_cast"]
+            parties_list = dataset["parties_list"]
+            has_total_column = dataset["has_total_column"]
+            num_districts = len(votes)
+
+            global_max_possible_coverage += (num_districts * len(parties_list))
+
+            if has_total_column:
+                for d in votes.keys():
+                    sum_listed_parties = sum(votes[d].values())
+                    if total_votes_cast[d] < sum_listed_parties:
+                        validation_errors.append(
+                            f"[{country_name.upper()} - {year}] District '{d}' total raw votes count ({total_votes_cast[d]:,}) is smaller than listed party subset sum ({sum_listed_parties:,})."
+                        )
+
+            total_mandates_sum = sum(district_caps.values())
+            if country_name.lower() == "portugal" and total_mandates_sum != 226:
+                validation_errors.append(
+                    f"[{country_name.upper()} - {year}] Portugal context failure: Total structural seats equals {total_mandates_sum} instead of 226 bounds."
+                )
+
+            national_party_votes = {p: sum(votes[d][p] for d in votes.keys()) for p in parties_list}
+            party_caps = get_national_party_caps(
+                country_name, national_party_votes, total_mandates_sum, dataset.get("national_mandates")
+            )
+
+            if sum(party_caps.values()) != total_mandates_sum:
+                validation_errors.append(
+                    f"[{country_name.upper()} - {year}] National targets matching error: National party mandates sum to {sum(party_caps.values())} while structure bounds freeze at {total_mandates_sum}."
+                )
+
+    if validation_errors:
+        print(f"\n{RED}❌ DATA VALIDATION FAILED — {len(validation_errors)} critical database issue(s) identified:{RESET}")
+        for err in validation_errors:
+            print(f"   - {err}")
+        raise ValueError("Electoral pipeline execution aborted.")
+
+    print(f"{GREEN}✅ All datasets passed upfront integrity passes. Proceeding to compilation pipeline.{RESET}\n")
+
+    return all_datasets, historical_election_count, global_max_possible_coverage
+</file>
+
+<file path="baseline_engines.py">
+import math
+import heapq
+from typing import Dict, List, Optional, Tuple
+
+def dhondt_apportion(weights: Dict[str, int], seats_target: int) -> Dict[str, int]:
+    seats = {k: 0 for k in weights}
+    active = [(k, w) for k, w in weights.items() if w > 0]
+    if seats_target <= 0 or not active:
+        return seats
+    
+    for _ in range(seats_target):
+        best_party = max(active, key=lambda x: weights[x[0]] / (seats[x[0]] + 1))
+        seats[best_party[0]] += 1
+    return seats
+
+
+def sainte_lague_apportion(weights: Dict[str, float], seats_target: int) -> Tuple[Dict[str, int], float]:
+    seats = {k: 0 for k in weights}
+    active = [(k, w) for k, w in weights.items() if w > 0]
+    if seats_target <= 0 or not active:
+        return seats, float('inf')
+
+    heap = [(-float(w), k) for k, w in active]
+    heapq.heapify(heap)
+
+    last_quotient = None
+    for _ in range(seats_target):
+        if not heap:
+            break
+        neg_quotient, k = heapq.heappop(heap)
+        last_quotient = -neg_quotient
+        seats[k] += 1
+        new_divisor = 2 * seats[k] + 1
+        heapq.heappush(heap, (-weights[k] / new_divisor, k))
+
+    next_quotient = -heap[0][0] if heap else 0.0
+    divisor = (last_quotient + next_quotient) if (last_quotient is not None and next_quotient > 0) else (2.0 * last_quotient if last_quotient else float('inf'))
+
+    return seats, divisor
+
+
+def danish_apportion(weights: Dict[str, float], seats_target: int) -> Tuple[Dict[str, int], float]:
+    seats = {k: 0 for k in weights}
+    active = [(k, w) for k, w in weights.items() if w > 0]
+    if seats_target <= 0 or not active:
+        return seats, float('inf')
+
+    heap = [(-float(w), k) for k, w in active]
+    heapq.heapify(heap)
+
+    last_quotient = None
+    for _ in range(seats_target):
+        if not heap:
+            break
+        neg_quotient, k = heapq.heappop(heap)
+        last_quotient = -neg_quotient
+        seats[k] += 1
+        new_divisor = 3 * seats[k] + 1
+        heapq.heappush(heap, (-weights[k] / new_divisor, k))
+
+    next_quotient = -heap[0][0] if heap else 0.0
+    divisor = (last_quotient + next_quotient) if (last_quotient is not None and next_quotient > 0) else (2.0 * last_quotient if last_quotient else float('inf'))
+
+    return seats, divisor
+
+
+def get_national_party_caps(country_name: str, national_votes: Dict[str, int], total_mandates: int, national_mandates_override: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+    if national_mandates_override is not None:
+        return national_mandates_override
+
+    c_lower = country_name.lower()
+    if c_lower == "zurich":
+        caps, _ = sainte_lague_apportion({k: float(v) for k, v in national_votes.items()}, total_mandates)
+        return caps
+    elif c_lower == "portugal":
+        return dhondt_apportion(national_votes, total_mandates)
+    else:
+        raise NotImplementedError(f"No national mandate rule defined for region '{country_name}'.")
+
+
+def _divisor_interval_sainte_lague(votes_vector: Dict[str, int], other_divs: Dict[str, float], seats_vector: Dict[str, int]) -> Tuple[float, float]:
+    lo, hi = 0.0, float('inf')
+    for k, v in votes_vector.items():
+        d = other_divs.get(k, 1.0)
+        if d == float('inf') or d <= 0 or v == 0:
+            continue
+        a = seats_vector[k]
+        low_k = v / (d * (2 * a + 1))
+        if low_k > lo: lo = low_k
+        if a > 0:
+            high_k = v / (d * (2 * a - 1))
+            if high_k < hi: hi = high_k
+    return lo, hi
+
+
+def _divisor_interval_danish(votes_vector: Dict[str, int], other_divs: Dict[str, float], seats_vector: Dict[str, int]) -> Tuple[float, float]:
+    lo, hi = 0.0, float('inf')
+    for k, v in votes_vector.items():
+        d = other_divs.get(k, 1.0)
+        if d == float('inf') or d <= 0 or v == 0:
+            continue
+        a = seats_vector[k]
+        low_k = v / (d * (3 * a + 1))
+        if low_k > lo: lo = low_k
+        if a > 0:
+            high_k = v / (d * (3 * a - 2))
+            if high_k < hi: hi = high_k
+    return lo, hi
+
+
+def _centered_divisor(lo: float, hi: float, fallback: float) -> float:
+    if hi == float('inf') or lo <= 0 or lo >= hi:
+        return fallback
+    return math.sqrt(lo * hi)
+
+
+def _refit_divisors(seats: Dict[str, Dict[str, int]], votes_map: Dict[str, Dict[str, int]], party_caps: Dict[str, int], district_caps: Dict[str, int], method_type: str = "zurich") -> Tuple[Dict[str, float], Dict[str, float]]:
+    districts = list(district_caps.keys())
+    parties = list(party_caps.keys())
+    row_div = {d: 1.0 for d in districts}
+    col_div = {p: (float('inf') if party_caps[p] == 0 else 1.0) for p in parties}
+    interval_func = _divisor_interval_danish if method_type.lower() == "danish" else _divisor_interval_sainte_lague
+
+    for _ in range(50):
+        for d in districts:
+            lo, hi = interval_func(votes_map[d], col_div, seats[d])
+            row_div[d] = _centered_divisor(lo, hi, fallback=row_div[d])
+
+        for p in parties:
+            if party_caps[p] == 0: continue
+            col_votes = {d: votes_map[d][p] for d in districts}
+            col_seats = {d: seats[d][p] for d in districts}
+            lo, hi = interval_func(col_votes, row_div, col_seats)
+            col_div[p] = _centered_divisor(lo, hi, fallback=col_div[p])
+
+    return row_div, col_div
+
+
+def _seat_transfer_repair(seats: Dict[str, Dict[str, int]], votes_map: Dict[str, Dict[str, int]], party_caps: Dict[str, int], district_caps: Dict[str, int], method_type: str = "zurich", max_attempts: int = 500) -> bool:
+    districts = list(district_caps.keys())
+    parties = list(party_caps.keys())
+
+    def row_surplus(d): return sum(seats[d][p] for p in parties) - district_caps[d]
+    def col_surplus(p): return sum(seats[d][p] for d in districts) - party_caps[p]
+    is_danish = (method_type.lower() == "danish")
+
+    for _ in range(max_attempts):
+        over_rows = [d for d in districts if row_surplus(d) > 0]
+        under_rows = [d for d in districts if row_surplus(d) < 0]
+        over_cols = [p for p in parties if col_surplus(p) > 0]
+        under_cols = [p for p in parties if col_surplus(p) < 0]
+
+        if not over_rows and not under_rows and not over_cols and not under_cols:
+            return True
+
+        moved = False
+        for d_over in over_rows:
+            for d_under in under_rows:
+                candidates = []
+                for p in parties:
+                    if seats[d_over][p] <= 0: continue
+                    v_over, v_under = votes_map[d_over][p], votes_map[d_under][p]
+                    a_over_after, a_under_after = seats[d_over][p] - 1, seats[d_under][p] + 1
+                    
+                    if is_danish:
+                        q_over_after = v_over / (3 * a_over_after + 1) if v_over > 0 else 0.0
+                        q_under_after = v_under / (3 * a_under_after - 2) if (v_under > 0 and a_under_after > 0) else float('inf')
+                    else:
+                        q_over_after = v_over / (2 * a_over_after + 1) if v_over > 0 else 0.0
+                        q_under_after = v_under / (2 * a_under_after - 1) if (v_under > 0 and a_under_after > 0) else float('inf')
+
+                    candidates.append((abs(q_over_after - q_under_after), p))
+                if candidates:
+                    candidates.sort()
+                    _, p = candidates[0]
+                    seats[d_over][p] -= 1
+                    seats[d_under][p] += 1
+                    moved = True
+                    break
+            if moved: break
+
+        if not moved:
+            for p_over in over_cols:
+                for p_under in under_cols:
+                    candidates = []
+                    for d in districts:
+                        if seats[d][p_over] <= 0: continue
+                        v_over, v_under = votes_map[d][p_over], votes_map[d][p_under]
+                        a_over_after, a_under_after = seats[d][p_over] - 1, seats[d][p_under] + 1
+                        
+                        if is_danish:
+                            q_over_after = v_over / (3 * a_over_after + 1) if v_over > 0 else 0.0
+                            q_under_after = v_under / (3 * a_under_after - 2) if (v_under > 0 and a_under_after > 0) else float('inf')
+                        else:
+                            q_over_after = v_over / (2 * a_over_after + 1) if v_over > 0 else 0.0
+                            q_under_after = v_under / (2 * a_under_after - 1) if (v_under > 0 and a_under_after > 0) else float('inf')
+
+                        candidates.append((abs(q_over_after - q_under_after), d))
+                    if candidates:
+                        candidates.sort()
+                        _, d = candidates[0]
+                        seats[d][p_over] -= 1
+                        seats[d][p_under] += 1
+                        moved = True
+                        break
+                if moved: break
+
+        if not moved:
+            return False
+
+    return False
+
+
+def verify_biproportional_integrity(seats: Dict[str, Dict[str, int]], votes_map: Dict[str, Dict[str, int]], party_caps: Dict[str, int], district_caps: Dict[str, int], row_div: Dict[str, float], col_div: Dict[str, float], method_type: str = "zurich") -> Tuple[bool, List[str]]:
+    errors = []
+    EPS = 1e-9  
+    
+    for d in district_caps.keys():
+        for p in party_caps.keys():
+            v = votes_map[d][p]
+            r = row_div[d]
+            c = col_div[p]
+            
+            if r <= 0 or c <= 0:
+                errors.append(f"Invalid non-positive multiplier at District '{d}' ({r}) or Party '{p}' ({c})")
+                continue
+                
+            q = 0.0 if (c == float('inf') or r == float('inf')) else (v / (r * c)) + EPS
+            reconstructed_seats = math.floor((q + 2.0) / 3.0) if (method_type.lower() == "danish" and q >= 1.0) else (math.floor((q + 1.0) / 2.0) if q >= 1.0 else 0)
+                
+            actual_seats = seats[d][p]
+            if reconstructed_seats != actual_seats:
+                errors.append(f"Reconstruction mismatch at District '{d}', Party '{p}': allocated {actual_seats} seat(s), but multipliers yield {reconstructed_seats} seat(s) (quotient: {q:.4f})")
+
+    for d, expected_cap in district_caps.items():
+        actual_sum = sum(seats[d][p] for p in party_caps.keys())
+        if actual_sum != expected_cap:
+            errors.append(f"District '{d}' seats sum to {actual_sum}, expected {expected_cap} (Delta: {actual_sum - expected_cap:+d})")
+
+    for p, expected_cap in party_caps.items():
+        actual_sum = sum(seats[d][p] for d in district_caps.keys())
+        if actual_sum != expected_cap:
+            errors.append(f"Party '{p}' seats sum to {actual_sum}, expected {expected_cap} (Delta: {actual_sum - expected_cap:+d})")
+
+    return len(errors) == 0, errors
+
+
+def allocate_double_proportionality(votes_map: Dict[str, Dict[str, int]], party_caps: Dict[str, int], district_caps: Dict[str, int], max_cycles: int = 1000) -> Tuple[Dict[str, Dict[str, int]], Dict[str, int], Dict[str, float], Dict[str, float], bool, List[str]]:
+    districts = list(district_caps.keys())
+    parties = list(party_caps.keys())
+    row_div = {d: 1.0 for d in districts}
+    col_div = {p: (float('inf') if party_caps[p] == 0 else 1.0) for p in parties}
+    seats = {d: {p: 0 for p in parties} for d in districts}
+    history = {}
+    stall_streak = 0
+
+    for cycle in range(max_cycles):
+        for d in districts:
+            weights = {p: (votes_map[d][p] / col_div[p] if col_div[p] < float('inf') else 0.0) for p in parties}
+            row_seats, _ = sainte_lague_apportion(weights, district_caps[d])
+            for p in parties: seats[d][p] = row_seats.get(p, 0)
+            lo, hi = _divisor_interval_sainte_lague(votes_map[d], col_div, seats[d])
+            row_div[d] = _centered_divisor(lo, hi, fallback=row_div[d])
+
+        if all(sum(seats[d][p] for d in districts) == party_caps[p] for p in parties): break
+
+        for p in parties:
+            if party_caps[p] == 0:
+                col_div[p] = float('inf')
+                for d in districts: seats[d][p] = 0
+                continue
+            weights = {d: votes_map[d][p] / row_div[d] for d in districts if row_div[d] > 0}
+            col_seats, _ = sainte_lague_apportion(weights, party_caps[p])
+            for d in districts: seats[d][p] = col_seats.get(d, 0)
+            lo, hi = _divisor_interval_sainte_lague({d: votes_map[d][p] for d in districts}, row_div, {d: seats[d][p] for d in districts})
+            col_div[p] = _centered_divisor(lo, hi, fallback=col_div[p])
+
+        if all(sum(seats[d][p] for p in parties) == district_caps[d] for d in districts): break
+
+        state_key = tuple(tuple(seats[d][p] for p in parties) for d in districts)
+        if state_key in history:
+            stall_streak += 1
+            factor = 1.0 + (0.0005 * stall_streak)
+            if stall_streak % 2 == 0:
+                for pp in parties:
+                    if col_div[pp] < float('inf'): col_div[pp] *= factor
+            else:
+                for dd in districts:
+                    if row_div[dd] > 0: row_div[dd] *= factor
+            if stall_streak > 40: break
+            continue
+        stall_streak = 0
+        history[state_key] = cycle
+
+    is_valid, errors = verify_biproportional_integrity(seats, votes_map, party_caps, district_caps, row_div, col_div, method_type="zurich")
+    if not is_valid and _seat_transfer_repair(seats, votes_map, party_caps, district_caps, method_type="zurich"):
+        row_div, col_div = _refit_divisors(seats, votes_map, party_caps, district_caps, method_type="zurich")
+        is_valid, errors = verify_biproportional_integrity(seats, votes_map, party_caps, district_caps, row_div, col_div, method_type="zurich")
+
+    return seats, {p: sum(seats[d][p] for d in districts) for p in parties}, row_div, col_div, is_valid, errors
+
+
+def allocate_double_proportionality_danish(votes_map: Dict[str, Dict[str, int]], party_caps: Dict[str, int], district_caps: Dict[str, int], max_cycles: int = 1000) -> Tuple[Dict[str, Dict[str, int]], Dict[str, int], Dict[str, float], Dict[str, float], bool, List[str]]:
+    districts = list(district_caps.keys())
+    parties = list(party_caps.keys())
+    row_div = {d: 1.0 for d in districts}
+    col_div = {p: (float('inf') if party_caps[p] == 0 else 1.0) for p in parties}
+    seats = {d: {p: 0 for p in parties} for d in districts}
+    history = {}
+    stall_streak = 0
+
+    for cycle in range(max_cycles):
+        for d in districts:
+            weights = {p: (votes_map[d][p] / col_div[p] if col_div[p] < float('inf') else 0.0) for p in parties}
+            row_seats, _ = danish_apportion(weights, district_caps[d])
+            for p in parties: seats[d][p] = row_seats.get(p, 0)
+            lo, hi = _divisor_interval_danish(votes_map[d], col_div, seats[d])
+            row_div[d] = _centered_divisor(lo, hi, fallback=row_div[d])
+
+        if all(sum(seats[d][p] for d in districts) == party_caps[p] for p in parties): break
+
+        for p in parties:
+            if party_caps[p] == 0:
+                col_div[p] = float('inf')
+                for d in districts: seats[d][p] = 0
+                continue
+            weights = {d: votes_map[d][p] / row_div[d] for d in districts if row_div[d] > 0}
+            col_seats, _ = danish_apportion(weights, party_caps[p])
+            for d in districts: seats[d][p] = col_seats.get(d, 0)
+            lo, hi = _divisor_interval_danish({d: votes_map[d][p] for d in districts}, row_div, {d: seats[d][p] for d in districts})
+            col_div[p] = _centered_divisor(lo, hi, fallback=col_div[p])
+
+        if all(sum(seats[d][p] for p in parties) == district_caps[d] for d in districts): break
+
+        state_key = tuple(tuple(seats[d][p] for p in parties) for d in districts)
+        if state_key in history:
+            stall_streak += 1
+            factor = 1.0 + (0.0005 * stall_streak)
+            if stall_streak % 2 == 0:
+                for pp in parties:
+                    if col_div[pp] < float('inf'): col_div[pp] *= factor
+            else:
+                for dd in districts:
+                    if row_div[dd] > 0: row_div[dd] *= factor
+            if stall_streak > 40: break
+            continue
+        stall_streak = 0
+        history[state_key] = cycle
+
+    is_valid, errors = verify_biproportional_integrity(seats, votes_map, party_caps, district_caps, row_div, col_div, method_type="danish")
+    if not is_valid and _seat_transfer_repair(seats, votes_map, party_caps, district_caps, method_type="danish"):
+        row_div, col_div = _refit_divisors(seats, votes_map, party_caps, district_caps, method_type="danish")
+        is_valid, errors = verify_biproportional_integrity(seats, votes_map, party_caps, district_caps, row_div, col_div, method_type="danish")
+
+    return seats, {p: sum(seats[d][p] for d in districts) for p in parties}, row_div, col_div, is_valid, errors
+</file>
+
+<file path="config.py">
+import os
+from typing import Any, Dict, List
+
+# ==============================================================================
+# MASTER GLOBAL RUN CONFIGURATION LAYER
+# ==============================================================================
+ENABLE_MONTE_CARLO = False     # True for Monte Carlo simulations, False for raw historical reports
+ENABLE_DANISH_DP = True       # Global Toggle: True to enable Danish DP calculations & tables
+ENABLE_STAIRCASE_PLOTS = 0     # 1 to generate and save staircase charts to disk; 0 to disable
+SHOW_PLOT_POPUPS = 0           # 0 = Save images silently to folder; 1 = Open popups sequentially
+
+SIMULATIONS = 250              # Total valid variant runs executed per historical election cycle
+NATIONAL_VARIATION = 8.0       # Maximum uniform national party swing boundary (± percentage points)
+LOCAL_VARIATION = 2.0          # Maximum independent regional district variance shift factor (± percentage)
+RANDOM_SEED = 12345            # Base master algorithm initializer seed value
+
+# --- QUOTIENT EFFICIENCY & DIAGNOSTIC TOGGLES ---
+SHOW_QUOTIENT_STATS_CONSOLE = 1  # 1 to display quotient milestone efficiency tables in console; 0 to hide
+SHOW_QUOTIENT_STATS_EXCEL = 1    # 1 to include quotient efficiency summary sheets in Excel export; 0 to hide
+QUOTIENT_MILESTONES = [50, 60, 70, 80, 90, 100] # Decile percentages for mandate completion
+
+# --- THERMAL MANAGEMENT ---
+SIM_BATCH_SIZE = 25             # Run simulations in batches of x
+SIM_COOLING_PAUSE = 2.0          # Pause for 2 seconds between batches to keep CPU cool
+
+SUPPORTED_REGIONS = {"portugal", "zurich"}
+
+# Formatting Color Codes
+GREEN, RED, BLUE, YELLOW, RESET = "\033[92m", "\033[91m", "\033[94m", "\033[93m", "\033[0m"
+BG_RED_WHITE = "\033[41m\033[97m"
+BG_SHADE = "\033[47m"
+</file>
+
+<file path="custom_methods.py">
+import math
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from config import QUOTIENT_MILESTONES
+
+# ==============================================================================
+# 1. METHOD TUNING CONSTANTS & DEFAULTS (SINGLE SOURCE OF TRUTH)
+# ==============================================================================
+# Smallest First Method Defaults
+DEFAULT_SMALLEST_FIRST_STEP = 3          # Divisor increment step (+3: 1, 4, 7, 10...)
+DEFAULT_SMALLEST_FIRST_TIER1_CAP = 5     # Tier 1: Parties with <= 5 national mandates
+DEFAULT_SMALLEST_FIRST_TIER2_CAP = 20    # Tier 2: Parties with 6 to 20 national mandates
+
+# 2-Speed Danish Pool Defaults
+DEFAULT_TWO_SPEED_ROUND1_DISTRICT_CAP = 4 # Max seats per party per district in Round 1
+
+# Non-Formula Progressive Defaults [1, 3, 4, 4, 7, 10]
+DEFAULT_PROGRESSIVE_PHASE1_START = 1
+DEFAULT_PROGRESSIVE_PHASE1_STEP = 3
+DEFAULT_PROGRESSIVE_PHASE1_COUNT = 4
+DEFAULT_PROGRESSIVE_PHASE2_STEP = 4
+DEFAULT_PROGRESSIVE_PHASE2_COUNT = 7
+DEFAULT_PROGRESSIVE_PHASE3_STEP = 10
+# the absolute best version with 2 extra gaps produced weighted gallagher 6.1 and inversion 0.69 for the PTdata 2015-2025
+
+
+# ==============================================================================
+# 2. HELPER & DIVISOR FUNCTIONS
+# ==============================================================================
+
+def compute_quotient_milestones(
+    history_log: List[Dict[str, Any]], 
+    total_mandates: int, 
+    milestones: List[int] = QUOTIENT_MILESTONES
+) -> Dict[int, Dict[str, Any]]:
+    results = {}
+    if not history_log or total_mandates <= 0:
+        return results
+
+    running_map = {}
+    for entry in history_log:
+        rt = entry["Running Total"]
+        if rt not in running_map:
+            running_map[rt] = entry["Step"]
+
+    for pct in milestones:
+        target_seats = math.ceil(total_mandates * (pct / 100.0))
+        step_eval = running_map.get(target_seats)
+        if step_eval is None:
+            for rt in range(target_seats, total_mandates + 1):
+                if rt in running_map:
+                    step_eval = running_map[rt]
+                    break
+        if step_eval is None:
+            step_eval = history_log[-1]["Step"] if history_log else total_mandates
+
+        skipped = step_eval - target_seats
+        eff = (target_seats / step_eval * 100.0) if step_eval > 0 else 100.0
+        results[pct] = {
+            "target_seats": target_seats,
+            "quotients_eval": step_eval,
+            "skipped": skipped,
+            "efficiency_pct": eff
+        }
+    return results
+
+
+def get_non_formula_progressive_divisor(
+    n: int,
+    phase1_start: int = DEFAULT_PROGRESSIVE_PHASE1_START,
+    phase1_step: int = DEFAULT_PROGRESSIVE_PHASE1_STEP,
+    phase1_count: int = DEFAULT_PROGRESSIVE_PHASE1_COUNT,
+    phase2_step: int = DEFAULT_PROGRESSIVE_PHASE2_STEP,
+    phase2_count: int = DEFAULT_PROGRESSIVE_PHASE2_COUNT,
+    phase3_step: int = DEFAULT_PROGRESSIVE_PHASE3_STEP,
+) -> int:
+    """Calculates the exact divisor for seat position n in the 3-Speed Progressive Method."""
+    p1_last = phase1_start + max(0, phase1_count - 1) * phase1_step
+    p2_last = p1_last + phase2_count * phase2_step
+
+    if n <= phase1_count:
+        return phase1_start + (n - 1) * phase1_step
+    elif n <= phase1_count + phase2_count:
+        offset = n - phase1_count
+        return p1_last + offset * phase2_step
+    else:
+        offset = n - (phase1_count + phase2_count)
+        return p2_last + offset * phase3_step
+
+
+# ==============================================================================
+# 3. ALLOCATION ENGINES
+# ==============================================================================
+
+def allocate_pool_method(
+    votes_map: Dict[str, Dict[str, int]], 
+    party_caps: Dict[str, int], 
+    district_caps: Dict[str, int], 
+    divisor_func: Optional[Callable[[int], int]] = None
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, int], List[Dict[str, Any]]]:
+    if divisor_func is None:
+        divisor_func = lambda n: (n * (n + 1)) // 2 
+
+    all_quotients_pool = []
+    for district, parties in votes_map.items():
+        max_possible_seats = district_caps[district]
+        for party, vote_count in parties.items():
+            if party_caps.get(party, 0) == 0:
+                continue
+            for seat_idx in range(1, max_possible_seats + 1):
+                divisor = divisor_func(seat_idx)
+                if divisor <= 0: divisor = 1
+                all_quotients_pool.append({
+                    "District": district, "Party": party,
+                    "Quotient": round(vote_count / divisor, 4),
+                    "Divisor Used": divisor, "Seat Attempt #": seat_idx
+                })
+                
+    all_quotients_pool.sort(key=lambda x: (x["District"], x["Party"]))
+    all_quotients_pool.sort(key=lambda x: x["Quotient"], reverse=True)
+
+    final_allocations = {d: {p: 0 for p in party_caps.keys()} for d in district_caps.keys()}
+    party_won = {p: 0 for p in party_caps.keys()}
+    district_won = {d: 0 for d in district_caps.keys()}
+    
+    total_allocated = 0
+    max_needed = sum(district_caps.values())
+    history_log = []
+    step_idx = 0
+    
+    for item in all_quotients_pool:
+        if total_allocated >= max_needed:
+            break
+        step_idx += 1
+        d, p = item["District"], item["Party"]
+        district_full = district_won[d] >= district_caps[d]
+        party_full = party_won[p] >= party_caps[p]
+        
+        if district_full and party_full: status = "No - Both Caps Reached"
+        elif district_full: status = "No - District Cap Reached"
+        elif party_full: status = "No - National Party Cap Reached"
+        else:
+            status = "Yes"
+            final_allocations[d][p] += 1
+            party_won[p] += 1
+            district_won[d] += 1
+            total_allocated += 1
+            
+        history_log.append({
+            "Step": step_idx,
+            "District": d, 
+            "Party": p, 
+            "Quotient": item["Quotient"],
+            "Divisor": item["Divisor Used"], 
+            "Seat Attempt": item["Seat Attempt #"],
+            "Allocated": status,
+            "Running Total": total_allocated
+        })
+    return final_allocations, party_won, history_log
+
+
+def allocate_progressive_pool_method(
+    votes_map: Dict[str, Dict[str, int]], 
+    party_caps: Dict[str, int], 
+    district_caps: Dict[str, int], 
+    phase1_start: int = DEFAULT_PROGRESSIVE_PHASE1_START, 
+    phase1_step: int = DEFAULT_PROGRESSIVE_PHASE1_STEP, 
+    phase1_count: int = DEFAULT_PROGRESSIVE_PHASE1_COUNT,
+    phase2_step: int = DEFAULT_PROGRESSIVE_PHASE2_STEP, 
+    phase2_count: int = DEFAULT_PROGRESSIVE_PHASE2_COUNT,
+    phase3_step: int = DEFAULT_PROGRESSIVE_PHASE3_STEP
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, int], List[Dict[str, Any]]]:
+    """
+    3-Speed Piecewise Linear Divisor Engine (Seamless Transitions):
+    - Phase 1: Starts at phase1_start, advances by phase1_step for phase1_count seats.
+    - Phase 2: Continues seamlessly, advancing by phase2_step for phase2_count seats.
+    - Phase 3: Continues seamlessly, advancing by phase3_step indefinitely.
+    """
+    dynamic_divisor_func = lambda n: get_non_formula_progressive_divisor(
+        n, phase1_start, phase1_step, phase1_count, phase2_step, phase2_count, phase3_step
+    )
+
+    return allocate_pool_method(votes_map, party_caps, district_caps, divisor_func=dynamic_divisor_func)
+
+
+def allocate_smallest_first_pool_method(
+    votes_map: Dict[str, Dict[str, int]], 
+    party_caps: Dict[str, int], 
+    district_caps: Dict[str, int], 
+    step: int = DEFAULT_SMALLEST_FIRST_STEP,
+    tier1_cap: int = DEFAULT_SMALLEST_FIRST_TIER1_CAP,
+    tier2_cap: int = DEFAULT_SMALLEST_FIRST_TIER2_CAP
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, int], List[Dict[str, Any]]]:
+    divisor_func = lambda n: 1 + step * (n - 1)
+
+    tier1_parties = [p for p, cap in party_caps.items() if cap <= tier1_cap]
+    tier2_parties = [p for p, cap in party_caps.items() if tier1_cap < cap <= tier2_cap]
+    tier3_parties = [p for p, cap in party_caps.items() if cap > tier2_cap]
+
+    tiers = [tier1_parties, tier2_parties, tier3_parties]
+
+    final_allocations = {d: {p: 0 for p in party_caps.keys()} for d in district_caps.keys()}
+    party_won = {p: 0 for p in party_caps.keys()}
+    district_won = {d: 0 for d in district_caps.keys()}
+
+    total_allocated = 0
+    max_needed = sum(district_caps.values())
+    history_log = []
+    step_idx = 0
+
+    for party_group in tiers:
+        if not party_group:
+            continue
+
+        tier_quotients = []
+        for district, parties in votes_map.items():
+            max_possible_seats = district_caps[district]
+            for party in party_group:
+                vote_count = parties.get(party, 0)
+                if party_caps.get(party, 0) == 0:
+                    continue
+                for seat_idx in range(1, max_possible_seats + 1):
+                    divisor = divisor_func(seat_idx)
+                    if divisor <= 0: divisor = 1
+                    tier_quotients.append({
+                        "District": district, "Party": party,
+                        "Quotient": round(vote_count / divisor, 4),
+                        "Divisor Used": divisor, "Seat Attempt #": seat_idx
+                    })
+
+        tier_quotients.sort(key=lambda x: (x["District"], x["Party"]))
+        tier_quotients.sort(key=lambda x: x["Quotient"], reverse=True)
+
+        for item in tier_quotients:
+            if total_allocated >= max_needed:
+                break
+            step_idx += 1
+            d, p = item["District"], item["Party"]
+            district_full = district_won[d] >= district_caps[d]
+            party_full = party_won[p] >= party_caps[p]
+
+            if district_full and party_full: status = "No - Both Caps Reached"
+            elif district_full: status = "No - District Cap Reached"
+            elif party_full: status = "No - National Party Cap Reached"
+            else:
+                status = "Yes"
+                final_allocations[d][p] += 1
+                party_won[p] += 1
+                district_won[d] += 1
+                total_allocated += 1
+
+            history_log.append({
+                "Step": step_idx,
+                "District": d, 
+                "Party": p, 
+                "Quotient": item["Quotient"],
+                "Divisor": item["Divisor Used"], 
+                "Seat Attempt": item["Seat Attempt #"],
+                "Allocated": status,
+                "Running Total": total_allocated
+            })
+
+    return final_allocations, party_won, history_log
+
+
+def allocate_two_speed_pool_method(
+    votes_map: Dict[str, Dict[str, int]], 
+    party_caps: Dict[str, int], 
+    district_caps: Dict[str, int], 
+    round1_district_cap: int = DEFAULT_TWO_SPEED_ROUND1_DISTRICT_CAP,
+    divisor_func: Optional[Callable[[int], int]] = None
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, int], List[Dict[str, Any]]]:
+    if divisor_func is None:
+        divisor_func = lambda n: 1 + 3 * (n - 1)  # Danish default: 1, 4, 7, 10...
+
+    all_quotients_pool = []
+    for district, parties in votes_map.items():
+        max_possible_seats = district_caps[district]
+        for party, vote_count in parties.items():
+            if party_caps.get(party, 0) == 0:
+                continue
+            for seat_idx in range(1, max_possible_seats + 1):
+                divisor = divisor_func(seat_idx)
+                if divisor <= 0: divisor = 1
+                all_quotients_pool.append({
+                    "District": district, "Party": party,
+                    "Quotient": round(vote_count / divisor, 4),
+                    "Divisor Used": divisor, "Seat Attempt #": seat_idx,
+                    "_used": False
+                })
+
+    all_quotients_pool.sort(key=lambda x: (x["District"], x["Party"]))
+    all_quotients_pool.sort(key=lambda x: x["Quotient"], reverse=True)
+
+    final_allocations = {d: {p: 0 for p in party_caps.keys()} for d in district_caps.keys()}
+    party_won = {p: 0 for p in party_caps.keys()}
+    district_won = {d: 0 for d in district_caps.keys()}
+
+    total_allocated = 0
+    max_needed = sum(district_caps.values())
+    history_log = []
+    step_idx = 0
+
+    # PHASE 1: ROUND 1 ALLOCATION
+    for item in all_quotients_pool:
+        if total_allocated >= max_needed:
+            break
+
+        d, p = item["District"], item["Party"]
+        district_full = district_won[d] >= district_caps[d]
+        party_full = party_won[p] >= party_caps[p]
+        round1_cap_reached = final_allocations[d][p] >= round1_district_cap
+
+        if district_full or party_full or round1_cap_reached:
+            continue
+
+        step_idx += 1
+        item["_used"] = True
+        final_allocations[d][p] += 1
+        party_won[p] += 1
+        district_won[d] += 1
+        total_allocated += 1
+
+        history_log.append({
+            "Step": step_idx,
+            "District": d, 
+            "Party": p, 
+            "Quotient": item["Quotient"],
+            "Divisor": item["Divisor Used"], 
+            "Seat Attempt": item["Seat Attempt #"],
+            "Allocated": "Yes",
+            "Running Total": total_allocated
+        })
+
+    # PHASE 2: ROUND 2 ALLOCATION
+    if total_allocated < max_needed:
+        remaining_pool = [q for q in all_quotients_pool if not q["_used"]]
+        remaining_pool.sort(key=lambda x: (x["District"], x["Party"]))
+        remaining_pool.sort(key=lambda x: x["Quotient"], reverse=True)
+
+        for item in remaining_pool:
+            if total_allocated >= max_needed:
+                break
+
+            step_idx += 1
+            item["_used"] = True
+            d, p = item["District"], item["Party"]
+            district_full = district_won[d] >= district_caps[d]
+            party_full = party_won[p] >= party_caps[p]
+
+            if district_full and party_full: status = "No - Both Caps Reached"
+            elif district_full: status = "No - District Cap Reached"
+            elif party_full: status = "No - National Party Cap Reached"
+            else:
+                status = "Yes"
+                final_allocations[d][p] += 1
+                party_won[p] += 1
+                district_won[d] += 1
+                total_allocated += 1
+
+            history_log.append({
+                "Step": step_idx,
+                "District": d, 
+                "Party": p, 
+                "Quotient": item["Quotient"],
+                "Divisor": item["Divisor Used"], 
+                "Seat Attempt": item["Seat Attempt #"],
+                "Allocated": status,
+                "Running Total": total_allocated
+            })
+
+    return final_allocations, party_won, history_log
+
+
+# ==============================================================================
+# 4. MASTER CUSTOM METHODS REGISTRY (SINGLE SOURCE OF TRUTH)
+# ==============================================================================
+
+CUSTOM_METHODS_REGISTRY: List[Dict[str, Any]] = [
+    {
+        "name": "Smallest First",
+        "enabled": False,
+        "run_historical": True,
+        "run_monte_carlo": True,
+        "show_console": True,
+        "show_excel": True,
+        "func": allocate_smallest_first_pool_method,
+        "kwargs": {
+            "step": DEFAULT_SMALLEST_FIRST_STEP, 
+            "tier1_cap": DEFAULT_SMALLEST_FIRST_TIER1_CAP, 
+            "tier2_cap": DEFAULT_SMALLEST_FIRST_TIER2_CAP
+        }
+    },
+    {
+        "name": "2-Speed",
+        "enabled": True,
+        "run_historical": True,
+        "run_monte_carlo": True,
+        "show_console": True,
+        "show_excel": True,
+        "func": allocate_two_speed_pool_method,
+        "kwargs": {
+            "round1_district_cap": DEFAULT_TWO_SPEED_ROUND1_DISTRICT_CAP, 
+            "divisor_func": lambda n: 1 + 3 * (n - 1)
+        }
+    },
+    {
+        "name": "Non-Formula Progressive",
+        "enabled": True,
+        "run_historical": True,
+        "run_monte_carlo": True,
+        "show_console": True,
+        "show_excel": True,
+        "func": allocate_progressive_pool_method,
+        "kwargs": {
+            "phase1_start": DEFAULT_PROGRESSIVE_PHASE1_START,
+            "phase1_step": DEFAULT_PROGRESSIVE_PHASE1_STEP,
+            "phase1_count": DEFAULT_PROGRESSIVE_PHASE1_COUNT,
+            "phase2_step": DEFAULT_PROGRESSIVE_PHASE2_STEP,
+            "phase2_count": DEFAULT_PROGRESSIVE_PHASE2_COUNT,
+            "phase3_step": DEFAULT_PROGRESSIVE_PHASE3_STEP
+        }
+    },
+    {
+        "name": "Exquisite Progressive Pool Method",
+        "enabled": True,
+        "run_historical": True,
+        "run_monte_carlo": True,
+        "show_console": True,
+        "show_excel": True,
+        "func": allocate_pool_method,
+        "kwargs": {"divisor_func": lambda n: (n**2 + 3*n - 2) // 2}
+    },
+    {
+        "name": "Quadratic Pool Method",
+        "enabled": True,
+        "run_historical": True,
+        "run_monte_carlo": True,
+        "show_console": True,
+        "show_excel": True,
+        "func": allocate_pool_method,
+        "kwargs": {"divisor_func": lambda n: n ** 2}
+    },
+    {
+        "name": "Triangular Pool",
+        "enabled": False,
+        "run_historical": True,
+        "run_monte_carlo": True,
+        "show_console": True,
+        "show_excel": True,
+        "func": allocate_pool_method,
+        "kwargs": {"divisor_func": lambda n: (n * (n + 1)) // 2}
+    }
+]
+</file>
+
+<file path="data_parser.py">
+import csv
+import re
+from typing import Any, Dict, List, Tuple
+
+def parse_int_safe(val: Any) -> int:
+    """Safely converts string/number representations into integers."""
+    if val is None:
+        return 0
+    s_val = str(val).strip().replace('\xa0', '').replace('"', '').replace("'", "").replace(' ', '')
+    if not s_val:
+        return 0
+        
+    if re.match(r'^\d{1,3}(,\d{3})+$', s_val):
+        s_val = s_val.replace(',', '')
+    else:
+        s_val = s_val.replace(',', '.')
+        
+    try:
+        return int(float(s_val))
+    except (ValueError, TypeError):
+        return 0
+
+
+def generate_district_letter_mapping(districts: List[str]) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """
+    Generates a deterministic mapping from district names to letters (A, B, C, ..., Z, AA, AB...).
+    Returns (district_to_letter, letter_to_district).
+    """
+    def index_to_letter(n: int) -> str:
+        string = ""
+        while n >= 0:
+            string = chr(n % 26 + 65) + string
+            n = n // 26 - 1
+        return string
+
+    d2l = {}
+    l2d = {}
+    for idx, d_name in enumerate(districts):
+        letter = index_to_letter(idx)
+        d2l[d_name] = letter
+        l2d[letter] = d_name
+    return d2l, l2d
+
+
+def sanitize_filename(name: str) -> str:
+    """Replaces unsafe characters in method/country names for file saving."""
+    return re.sub(r'[^\w\-_\. ]', '', name).strip().replace(' ', '_')
+
+
+def parse_stacked_country_file(file_path: str) -> Dict[str, Dict[str, Any]]:
+    """Parses vertical sequential multi-election datasets from CSV files."""
+    historical_elections = {}
+    filename = file_path.rsplit('/', 1)[-1].rsplit('\\', 1)[-1]
+    
+    target_mandate_override_keywords = {
+        "total seats", "total_seats", "gesamttotal", "totais mandatos", 
+        "totais_mandatos", "total mandates", "total_mandates", "mandatos totais", 
+        "mandatos_totais", "national_mandates", "national_party_caps", "override_mandates"
+    }
+
+    summary_district_keywords = {
+        "total votes", "totais_votos", "totais votos", "sum votes", "gesamttotal_votos"
+    }
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+        
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx].strip()
+        if not line or line.startswith(','):
+            idx += 1
+            continue
+            
+        year_match = re.match(r'^(\d{4})', line)
+        if year_match:
+            year_str = year_match.group(1)
+            idx += 1
+            
+            while idx < len(lines) and (not lines[idx].strip() or lines[idx].strip().startswith(',')):
+                idx += 1
+            if idx >= len(lines): break
+            
+            reader = csv.reader([lines[idx].strip()])
+            header_parts = [h.strip() for h in next(reader)]
+            
+            district_col_idx = 0
+            mandatos_idx = None
+            totais_idx = None
+            
+            mandate_keywords = ["mandatos", "mandates", "seats", "mandatos_totais", "mandate", "sitze", "zuteilung", "anzahl_mandate", "mandat", "seat", "sitze_total"]
+            total_keywords = ["totais", "total", "total_votes", "totais_votos", "sum", "stimmen_total", "votos_totais"]
+            
+            for i, h in enumerate(header_parts):
+                h_clean = h.lower()
+                if h_clean in mandate_keywords:
+                    mandatos_idx = i
+                elif h_clean in total_keywords:
+                    totais_idx = i
+
+            if mandatos_idx is None:
+                raise ValueError(f"❌ CRITICAL DATA ERROR: Dataset file '{filename}' (Year {year_str}) is missing a seats column.")
+
+            parties_list = []
+            party_indices = []
+            for i, h in enumerate(header_parts):
+                if i in (district_col_idx, mandatos_idx, totais_idx):
+                    continue
+                parties_list.append(h)
+                party_indices.append(i)
+            
+            votes: Dict[str, Dict[str, int]] = {}
+            district_caps: Dict[str, int] = {}
+            total_votes_cast: Dict[str, int] = {}
+            national_mandates_override = None 
+            
+            idx += 1
+            while idx < len(lines):
+                row_line = lines[idx].strip()
+                if not row_line or row_line.startswith(',', 0, 2): break
+                if re.match(r'^(\d{4})', row_line): break
+                
+                row_reader = csv.reader([row_line])
+                row_parts = [r.strip() for r in next(row_reader)]
+                
+                while len(row_parts) < len(header_parts):
+                    row_parts.append("0")
+                    
+                district = str(row_parts[district_col_idx])
+                district_clean = district.lower().strip()
+                
+                if district_clean in target_mandate_override_keywords:
+                    national_mandates_override = {}
+                    for party, p_idx in zip(parties_list, party_indices):
+                        val = row_parts[p_idx] if p_idx < len(row_parts) else "0"
+                        national_mandates_override[party] = parse_int_safe(val)
+                    idx += 1
+                    continue
+
+                if district_clean in summary_district_keywords:
+                    idx += 1
+                    continue
+                
+                seat_cap = parse_int_safe(row_parts[mandatos_idx])
+                district_caps[district] = seat_cap
+                
+                votes[district] = {}
+                for party, p_idx in zip(parties_list, party_indices):
+                    val = row_parts[p_idx] if p_idx < len(row_parts) else "0"
+                    votes[district][party] = parse_int_safe(val)
+                
+                if totais_idx is not None and totais_idx < len(row_parts) and row_parts[totais_idx]:
+                    total_votes_cast[district] = parse_int_safe(row_parts[totais_idx])
+                else:
+                    total_votes_cast[district] = sum(votes[district].values())
+                    
+                idx += 1
+                
+            historical_elections[year_str] = {
+                "parties_list": parties_list,
+                "votes": votes,
+                "district_caps": district_caps,
+                "total_votes_cast": total_votes_cast,
+                "has_total_column": (totais_idx is not None),
+                "national_mandates": national_mandates_override
+            }
+        else:
+            idx += 1
+            
+    return historical_elections
+</file>
+
+<file path="electoral_metrics.py">
+import math
+from typing import Any, Dict, List, Tuple
+
+def calculate_mean_district_gallagher(votes_map: Dict[str, Dict[str, int]], allocations_map: Dict[str, Dict[str, int]], parties_lst: List[str]) -> float:
+    district_scores = []
+    for d_name in votes_map.keys():
+        dist_votes_sum = sum(votes_map[d_name][p_name] for p_name in parties_lst)
+        dist_seats_sum = sum(allocations_map[d_name][p_name] for p_name in parties_lst)
+        
+        if dist_votes_sum == 0 or dist_seats_sum == 0:
+            district_scores.append(0.0)
+            continue
+            
+        sq_diff_sum = 0.0
+        for p_name in parties_lst:
+            v_pct = (votes_map[d_name][p_name] / dist_votes_sum) * 100.0
+            s_pct = (allocations_map[d_name][p_name] / dist_seats_sum) * 100.0
+            sq_diff_sum += (v_pct - s_pct) ** 2
+            
+        g_district = math.sqrt(0.5 * sq_diff_sum)
+        district_scores.append(g_district)
+        
+    return sum(district_scores) / len(district_scores) if district_scores else 0.0
+
+
+def calculate_weighted_mean_district_gallagher(votes_map: Dict[str, Dict[str, int]], allocations_map: Dict[str, Dict[str, int]], parties_lst: List[str], district_caps: Dict[str, int]) -> float:
+    total_weighted_score = 0.0
+    total_seats = 0
+    for d_name in votes_map.keys():
+        magnitude = district_caps.get(d_name, 0)
+        dist_votes_sum = sum(votes_map[d_name][p_name] for p_name in parties_lst)
+        dist_seats_sum = sum(allocations_map[d_name][p_name] for p_name in parties_lst)
+        
+        if dist_votes_sum == 0 or dist_seats_sum == 0:
+            g_district = 0.0
+        else:
+            sq_diff_sum = 0.0
+            for p_name in parties_lst:
+                v_pct = (votes_map[d_name][p_name] / dist_votes_sum) * 100.0
+                s_pct = (allocations_map[d_name][p_name] / dist_seats_sum) * 100.0
+                sq_diff_sum += (v_pct - s_pct) ** 2
+            g_district = math.sqrt(0.5 * sq_diff_sum)
+            
+        total_weighted_score += g_district * magnitude
+        total_seats += magnitude
+        
+    return total_weighted_score / total_seats if total_seats > 0 else 0.0
+
+
+def analyze_inversions(votes_map: Dict[str, Dict[str, int]], allocations_map: Dict[str, Dict[str, int]], parties_lst: List[str]) -> Tuple[Dict[str, Dict[str, str]], str, int, List[str]]:
+    marks = {d: {p: "" for p in parties_lst} for d in votes_map.keys()}
+    total_inversion_pairs = 0  
+    affected_districts = set()
+    detailed_logs = []
+    
+    for d in votes_map.keys():
+        for pA in parties_lst:
+            for pB in parties_lst:
+                if pA == pB: continue
+                if votes_map[d][pA] > votes_map[d][pB] and allocations_map[d][pA] < allocations_map[d][pB]:
+                    if not marks[d][pA] and not marks[d][pB]:
+                        marks[d][pA] = "-"
+                        marks[d][pB] = "+"
+                        total_inversion_pairs += 1  
+                        affected_districts.add(d)
+                        detailed_logs.append(
+                            f"    - Intra-District '{d}': {pA} had more votes ({votes_map[d][pA]:,}) than {pB} ({votes_map[d][pB]:,}) but received fewer seats ({allocations_map[d][pA]} vs {allocations_map[d][pB]})."
+                        )
+                        
+    analysis_str = f"Detected {total_inversion_pairs} intra-district inversion pair(s) across {len(affected_districts)} district(s)."
+    return marks, analysis_str, total_inversion_pairs, detailed_logs
+
+
+def analyze_global_staircase_inversions(
+    votes_map: Dict[str, Dict[str, int]], 
+    allocations_map: Dict[str, Dict[str, int]], 
+    parties_lst: List[str],
+    d2l_map: Dict[str, str]
+) -> Tuple[int, int, int, List[str], List[Dict[str, Any]], str, List[Tuple[int, int, str, str]]]:
+    entries = []
+    for d, p_dict in votes_map.items():
+        for p in parties_lst:
+            v = p_dict[p]
+            m = allocations_map[d][p]
+            if v > 0 or m > 0:
+                entries.append((v, m, d, p))
+
+    entries.sort(key=lambda x: (x[0], x[1]))
+
+    n = len(entries)
+    local_dips = 0
+    total_dominance_pairs = 0
+    displacement_magnitude = 0
+    detailed_logs = []
+    displacement_incidents = []
+
+    for i in range(n - 1):
+        v1, m1, d1, p1 = entries[i]
+        v2, m2, d2, p2 = entries[i + 1]
+        if m1 > m2:
+            local_dips += 1
+            if len(detailed_logs) < 10:
+                detailed_logs.append(
+                    f"    - Global Dip Step #{i+1}->#{i+2}: '{p1}' in '{d1}' ({v1:,} votes, {m1} seats) > '{p2}' in '{d2}' ({v2:,} votes, {m2} seats)"
+                )
+
+    for i in range(n):
+        v1, m1, d1, p1 = entries[i]
+        for j in range(i + 1, n):
+            v2, m2, d2, p2 = entries[j]
+            if m1 > m2:
+                total_dominance_pairs += 1
+
+    running_max_seats = 0
+    running_peak_entry = None
+    for v, m, d, p in entries:
+        if m > running_max_seats:
+            running_max_seats = m
+            running_peak_entry = (v, m, d, p)
+        elif m < running_max_seats and running_peak_entry:
+            gap = running_max_seats - m
+            displacement_magnitude += gap
+            displacement_incidents.append({
+                "gap": gap,
+                "victim_party": p,
+                "victim_district": d,
+                "victim_votes": v,
+                "victim_seats": m,
+                "peak_party": running_peak_entry[3],
+                "peak_district": running_peak_entry[2],
+                "peak_votes": running_peak_entry[0],
+                "peak_seats": running_peak_entry[1]
+            })
+
+    mandate_sequence_str = "-".join(f"{d2l_map[e[2]]}{e[1]}" for e in entries)
+    return local_dips, total_dominance_pairs, displacement_magnitude, detailed_logs, displacement_incidents, mandate_sequence_str, entries
+</file>
+
+<file path="main.py">
+import time
+from contextlib import nullcontext
+from typing import Any, Dict, List
+
+try:
+    from wakepy import keep
+    HAS_WAKEPY = True
+except ImportError:
+    HAS_WAKEPY = False
+
+from audit import audit_datasets
+from config import (
+    ENABLE_DANISH_DP,
+    ENABLE_MONTE_CARLO,
+    GREEN,
+    LOCAL_VARIATION,
+    NATIONAL_VARIATION,
+    QUOTIENT_MILESTONES,
+    RANDOM_SEED,
+    RESET,
+    SIMULATIONS,
+)
+from custom_methods import CUSTOM_METHODS_REGISTRY
+from data_parser import generate_district_letter_mapping
+from monte_carlo import run_monte_carlo_simulation
+from reporting import render_final_reports
+from runner import run_historical_election
+from visuals_export import export_quotient_analysis_excel, print_district_legend_console
+
+
+def main() -> None:
+    global_start_time = time.time()
+
+    # Active Method Registrations
+    active_custom_methods = [m for m in CUSTOM_METHODS_REGISTRY if m["enabled"]]
+    all_method_names: List[str] = ["Current District D'Hondt", "Zurich DP"]
+    if ENABLE_DANISH_DP:
+        all_method_names.append("Danish DP")
+    all_method_names.extend([m["name"] for m in active_custom_methods])
+
+    pool_method_names = [m["name"] for m in active_custom_methods]
+
+    # Global Performance Trackers
+    trackers = {
+        "all_method_names": all_method_names,
+        "global_inversion_tracker": {name: 0 for name in all_method_names},
+        "global_staircase_dips_tracker": {name: 0 for name in all_method_names},
+        "global_staircase_pairs_tracker": {name: 0 for name in all_method_names},
+        "global_staircase_magnitude_tracker": {name: 0 for name in all_method_names},
+        "global_coverage_tracker": {name: 0 for name in all_method_names},
+        "global_historical_gallagher_tracker": {name: 0.0 for name in all_method_names},
+        "global_historical_weighted_gallagher_tracker": {name: 0.0 for name in all_method_names},
+        "all_time_displacement_incidents": {name: [] for name in all_method_names},
+        "yearly_displacement_incidents": {},
+        "yearly_staircase_metrics": {},
+        "country_excel_quotient_records": [],
+        "country_milestone_summary_records": []
+    }
+
+    yearly_mc_logs: Dict[str, Any] = {}
+    meta_logs = {
+        "inversions": {name: [] for name in all_method_names if name != "Current District D'Hondt"},
+        "dips": {name: [] for name in all_method_names},
+        "pairs": {name: [] for name in all_method_names},
+        "mag": {name: [] for name in all_method_names},
+        "gallagher": {name: [] for name in all_method_names},
+        "weighted_gallagher": {name: [] for name in all_method_names},
+        "coverage": {name: [] for name in all_method_names},
+        "quotient_efficiency": {
+            m_name: {pct: [] for pct in QUOTIENT_MILESTONES} for m_name in pool_method_names
+        }
+    }
+
+    meta_mc_total_simulations = 0
+    run_metadata_log: List[str] = []
+    master_csv_rows: List[List[Any]] = [
+        ["==============================================================================="],
+        ["                CENTRAL ELECTORAL SIMULATION RESULTS REPOSITORY"],
+        ["==============================================================================="],
+        ["Monte Carlo Engine Status", "ENABLED" if ENABLE_MONTE_CARLO else "DISABLED"],
+        ["Danish DP Engine Status", "ENABLED" if ENABLE_DANISH_DP else "DISABLED"],
+        ["Random Master Seed", str(RANDOM_SEED)],
+        ["Target Iteration Runs Per Cycle", str(SIMULATIONS)],
+        ["National Variation Swing Limit", f"±{NATIONAL_VARIATION}%"],
+        ["Local District Variance Limit", f"±{LOCAL_VARIATION}%"],
+        []
+    ]
+
+    # PHASE 1: DATA INTEGRITY AUDIT
+    all_datasets, historical_election_count, global_max_possible_coverage = audit_datasets()
+
+    # PHASE 2: CORE SIMULATION ENGINE
+    sleep_preventer = keep.running() if (HAS_WAKEPY and ENABLE_MONTE_CARLO) else nullcontext()
+
+    if HAS_WAKEPY and ENABLE_MONTE_CARLO:
+        print("☕ Wakepy activated: Preventing system sleep during Monte Carlo simulation...\n")
+    elif ENABLE_MONTE_CARLO:
+        print("⚠️ Wakepy not installed: Running Monte Carlo without sleep inhibition. (Install with: pip install wakepy)\n")
+
+    with sleep_preventer:
+        for file_path, metadata_cache in all_datasets.items():
+            country_name = metadata_cache["country_name"]
+            elections_archive = metadata_cache["archive"]
+            
+            years_processed = sorted(elections_archive.keys())
+            run_metadata_log.append(f"{country_name.upper()} ({', '.join(years_processed)})")
+
+            trackers["country_excel_quotient_records"] = []
+            trackers["country_milestone_summary_records"] = []
+            country_all_years_plot_data: Dict[str, List[Dict[str, Any]]] = {}
+
+            all_country_districts = []
+            for yr, yr_data in elections_archive.items():
+                for d_name in yr_data["district_caps"].keys():
+                    if d_name not in all_country_districts:
+                        all_country_districts.append(d_name)
+            
+            d2l_map, _ = generate_district_letter_mapping(all_country_districts)
+            print_district_legend_console(country_name, d2l_map)
+
+            for year, dataset in elections_archive.items():
+                if ENABLE_MONTE_CARLO:
+                    print(f" Processing Simulation Metrics: {country_name.upper()} ({year})... ")
+                else:
+                    print(f" Processing {country_name.upper()} ({year})... ")
+
+                grid_data = run_historical_election(country_name, year, dataset, d2l_map, trackers)
+                country_all_years_plot_data[year] = grid_data
+
+                if ENABLE_MONTE_CARLO:
+                    sim_count = run_monte_carlo_simulation(
+                        country_name, year, dataset, d2l_map,
+                        all_method_names, yearly_mc_logs, meta_logs
+                    )
+                    meta_mc_total_simulations += sim_count
+
+            if not ENABLE_MONTE_CARLO and trackers["country_excel_quotient_records"]:
+                export_quotient_analysis_excel(
+                    country_name,
+                    trackers["country_excel_quotient_records"],
+                    trackers["country_milestone_summary_records"],
+                    d2l_map
+                )
+
+    # PHASE 3: REPORTING & OUTPUT GENERATION
+    render_final_reports(
+        all_method_names, trackers, yearly_mc_logs, meta_logs,
+        meta_mc_total_simulations, historical_election_count,
+        global_max_possible_coverage, master_csv_rows,
+        country_all_years_plot_data, country_name
+    )
+
+    elapsed_time = time.time() - global_start_time
+    hours, remainder = divmod(elapsed_time, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    time_str = f"{int(hours)}h {int(minutes)}m {seconds:.2f}s" if hours > 0 else f"{int(minutes)}m {seconds:.2f}s"
+
+    print("\n" + "="*80)
+    print(f" {GREEN}✓ MASTER DATA SUMMARY LEDGER REPORT GENERATED SUCCESSFULLY{RESET}")
+    print(" All calculated matrix blocks compiled into unified archive: 'master_electoral_report.csv'")
+    print(f" ⏱️  TOTAL EXECUTION TIME: {time_str}")
+    print("="*80 + "\n")
+
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="monte_carlo.py">
+import hashlib
+import random
+import time
+from typing import Any, Dict, List
+
+from baseline_engines import (
+    allocate_double_proportionality,
+    allocate_double_proportionality_danish,
+    dhondt_apportion,
+    get_national_party_caps,
+)
+from config import (
+    ENABLE_DANISH_DP,
+    LOCAL_VARIATION,
+    NATIONAL_VARIATION,
+    QUOTIENT_MILESTONES,
+    RANDOM_SEED,
+    SIM_BATCH_SIZE,
+    SIM_COOLING_PAUSE,
+    SIMULATIONS,
+)
+from custom_methods import CUSTOM_METHODS_REGISTRY, compute_quotient_milestones
+from electoral_metrics import (
+    analyze_global_staircase_inversions,
+    calculate_mean_district_gallagher,
+    calculate_weighted_mean_district_gallagher,
+)
+from runner import analyze_inversions
+
+
+def run_monte_carlo_simulation(
+    country_name: str,
+    year: str,
+    dataset: Dict[str, Any],
+    d2l_map: Dict[str, str],
+    all_method_names: List[str],
+    yearly_mc_logs: Dict[str, Any],
+    meta_logs: Dict[str, Any]
+) -> int:
+    """Runs stochastic Monte Carlo iteration loop for a given election year."""
+    votes = dataset["votes"]
+    district_caps = dataset["district_caps"]
+    parties_list = dataset["parties_list"]
+    total_mandates_sum = sum(district_caps.values())
+
+    seed_str = f"{country_name}_{year}_{RANDOM_SEED}"
+    hash_int = int(hashlib.sha256(seed_str.encode('utf-8')).hexdigest(), 16) % (2**32)
+    rng = random.Random(hash_int)
+
+    yearly_mc_logs[year] = {
+        "inversions": {m: [] for m in all_method_names if m != "Current District D'Hondt"},
+        "dips": {m: [] for m in all_method_names},
+        "pairs": {m: [] for m in all_method_names},
+        "mag": {m: [] for m in all_method_names},
+        "gallagher": {m: [] for m in all_method_names},
+        "weighted_gallagher": {m: [] for m in all_method_names},
+        "coverage": {m: [] for m in all_method_names}
+    }
+
+    valid_sim_count = 0
+    batch_count = 0
+
+    while valid_sim_count < SIMULATIONS:
+        sim_votes = {d: {} for d in votes.keys()}
+        national_swings = {p: rng.uniform(-NATIONAL_VARIATION / 100.0, NATIONAL_VARIATION / 100.0) for p in parties_list}
+
+        for d in votes.keys():
+            for p in parties_list:
+                base_v = votes[d][p]
+                local_var = rng.uniform(-LOCAL_VARIATION / 100.0, LOCAL_VARIATION / 100.0)
+                combined_factor = 1.0 + national_swings[p] + local_var
+                sim_votes[d][p] = max(0, int(round(base_v * combined_factor)))
+
+        if any(sum(sim_votes[d].values()) == 0 for d in sim_votes.keys()):
+            continue
+
+        sim_national_party_votes = {p: sum(sim_votes[d][p] for d in sim_votes.keys()) for p in parties_list}
+        sim_party_caps = get_national_party_caps(
+            country_name, sim_national_party_votes, total_mandates_sum, dataset.get("national_mandates")
+        )
+
+        if sum(sim_party_caps.values()) != total_mandates_sum:
+            continue
+
+        sim_curr_res = {d: {} for d in sim_votes.keys()}
+        for d in sim_votes.keys():
+            alloc = dhondt_apportion(sim_votes[d], district_caps[d])
+            for p in parties_list: sim_curr_res[d][p] = alloc.get(p, 0)
+
+        sim_dp_res, _, _, _, sim_dp_valid, _ = allocate_double_proportionality(sim_votes, sim_party_caps, district_caps)
+        if not sim_dp_valid:
+            continue
+
+        if ENABLE_DANISH_DP:
+            sim_danish_res, _, _, _, sim_danish_valid, _ = allocate_double_proportionality_danish(sim_votes, sim_party_caps, district_caps)
+            if not sim_danish_valid:
+                continue
+        else:
+            sim_danish_res = {}
+
+        # --- Intra-District Inversions ---
+        _, _, mc_dp_inv, _ = analyze_inversions(sim_votes, sim_dp_res, parties_list)
+        yearly_mc_logs[year]["inversions"]["Zurich DP"].append(mc_dp_inv)
+        meta_logs["inversions"]["Zurich DP"].append(mc_dp_inv)
+
+        if ENABLE_DANISH_DP:
+            _, _, mc_danish_inv, _ = analyze_inversions(sim_votes, sim_danish_res, parties_list)
+            yearly_mc_logs[year]["inversions"]["Danish DP"].append(mc_danish_inv)
+            meta_logs["inversions"]["Danish DP"].append(mc_danish_inv)
+
+        # --- GLOBAL Staircase Metrics ---
+        mc_curr_dips, mc_curr_pairs, mc_curr_mag, _, _, _, _ = analyze_global_staircase_inversions(sim_votes, sim_curr_res, parties_list, d2l_map)
+        yearly_mc_logs[year]["dips"]["Current District D'Hondt"].append(mc_curr_dips)
+        yearly_mc_logs[year]["pairs"]["Current District D'Hondt"].append(mc_curr_pairs)
+        yearly_mc_logs[year]["mag"]["Current District D'Hondt"].append(mc_curr_mag)
+        meta_logs["dips"]["Current District D'Hondt"].append(mc_curr_dips)
+        meta_logs["pairs"]["Current District D'Hondt"].append(mc_curr_pairs)
+        meta_logs["mag"]["Current District D'Hondt"].append(mc_curr_mag)
+
+        mc_dp_dips, mc_dp_pairs, mc_dp_mag, _, _, _, _ = analyze_global_staircase_inversions(sim_votes, sim_dp_res, parties_list, d2l_map)
+        yearly_mc_logs[year]["dips"]["Zurich DP"].append(mc_dp_dips)
+        yearly_mc_logs[year]["pairs"]["Zurich DP"].append(mc_dp_pairs)
+        yearly_mc_logs[year]["mag"]["Zurich DP"].append(mc_dp_mag)
+        meta_logs["dips"]["Zurich DP"].append(mc_dp_dips)
+        meta_logs["pairs"]["Zurich DP"].append(mc_dp_pairs)
+        meta_logs["mag"]["Zurich DP"].append(mc_dp_mag)
+
+        if ENABLE_DANISH_DP:
+            mc_danish_dips, mc_danish_pairs, mc_danish_mag, _, _, _, _ = analyze_global_staircase_inversions(sim_votes, sim_danish_res, parties_list, d2l_map)
+            yearly_mc_logs[year]["dips"]["Danish DP"].append(mc_danish_dips)
+            yearly_mc_logs[year]["pairs"]["Danish DP"].append(mc_danish_pairs)
+            yearly_mc_logs[year]["mag"]["Danish DP"].append(mc_danish_mag)
+            meta_logs["dips"]["Danish DP"].append(mc_danish_dips)
+            meta_logs["pairs"]["Danish DP"].append(mc_danish_pairs)
+            meta_logs["mag"]["Danish DP"].append(mc_danish_mag)
+
+        # --- Proportionality & Coverage ---
+        g_curr = calculate_mean_district_gallagher(sim_votes, sim_curr_res, parties_list)
+        g_dp = calculate_mean_district_gallagher(sim_votes, sim_dp_res, parties_list)
+
+        wg_curr = calculate_weighted_mean_district_gallagher(sim_votes, sim_curr_res, parties_list, district_caps)
+        wg_dp = calculate_weighted_mean_district_gallagher(sim_votes, sim_dp_res, parties_list, district_caps)
+
+        yearly_mc_logs[year]["gallagher"]["Current District D'Hondt"].append(g_curr)
+        yearly_mc_logs[year]["gallagher"]["Zurich DP"].append(g_dp)
+
+        yearly_mc_logs[year]["weighted_gallagher"]["Current District D'Hondt"].append(wg_curr)
+        yearly_mc_logs[year]["weighted_gallagher"]["Zurich DP"].append(wg_dp)
+
+        meta_logs["gallagher"]["Current District D'Hondt"].append(g_curr)
+        meta_logs["gallagher"]["Zurich DP"].append(g_dp)
+
+        meta_logs["weighted_gallagher"]["Current District D'Hondt"].append(wg_curr)
+        meta_logs["weighted_gallagher"]["Zurich DP"].append(wg_dp)
+
+        if ENABLE_DANISH_DP:
+            g_danish = calculate_mean_district_gallagher(sim_votes, sim_danish_res, parties_list)
+            wg_danish = calculate_weighted_mean_district_gallagher(sim_votes, sim_danish_res, parties_list, district_caps)
+            yearly_mc_logs[year]["gallagher"]["Danish DP"].append(g_danish)
+            yearly_mc_logs[year]["weighted_gallagher"]["Danish DP"].append(wg_danish)
+            meta_logs["gallagher"]["Danish DP"].append(g_danish)
+            meta_logs["weighted_gallagher"]["Danish DP"].append(wg_danish)
+
+        cov_curr = sum(1 for d in sim_votes.keys() for p in parties_list if sim_curr_res[d][p] > 0)
+        cov_dp = sum(1 for d in sim_votes.keys() for p in parties_list if sim_dp_res[d][p] > 0)
+
+        yearly_mc_logs[year]["coverage"]["Current District D'Hondt"].append(cov_curr)
+        yearly_mc_logs[year]["coverage"]["Zurich DP"].append(cov_dp)
+
+        meta_logs["coverage"]["Current District D'Hondt"].append(cov_curr)
+        meta_logs["coverage"]["Zurich DP"].append(cov_dp)
+
+        if ENABLE_DANISH_DP:
+            cov_danish = sum(1 for d in sim_votes.keys() for p in parties_list if sim_danish_res[d][p] > 0)
+            yearly_mc_logs[year]["coverage"]["Danish DP"].append(cov_danish)
+            meta_logs["coverage"]["Danish DP"].append(cov_danish)
+
+        # --- DYNAMIC CUSTOM METHOD MONTE CARLO LOOP ---
+        for method_cfg in CUSTOM_METHODS_REGISTRY:
+            if not method_cfg.get("enabled", True): 
+                continue
+            if not method_cfg.get("run_monte_carlo", True): 
+                continue
+            
+            m_name_str = str(method_cfg["name"])
+            sim_e_res, _, sim_e_hist = method_cfg["func"](sim_votes, sim_party_caps, district_caps, **method_cfg.get("kwargs", {}))
+
+            sim_e_milestones = compute_quotient_milestones(sim_e_hist, total_mandates_sum)
+            for pct in QUOTIENT_MILESTONES:
+                meta_logs["quotient_efficiency"][m_name_str][pct].append(
+                    sim_e_milestones.get(pct, {}).get("quotients_eval", 0)
+                )
+
+            _, _, mc_e_inv, _ = analyze_inversions(sim_votes, sim_e_res, parties_list)
+            mc_e_dips, mc_e_pairs, mc_e_mag, _, _, _, _ = analyze_global_staircase_inversions(sim_votes, sim_e_res, parties_list, d2l_map)
+            g_e = calculate_mean_district_gallagher(sim_votes, sim_e_res, parties_list)
+            wg_e = calculate_weighted_mean_district_gallagher(sim_votes, sim_e_res, parties_list, district_caps)
+            cov_e = sum(1 for d in sim_votes.keys() for p in parties_list if sim_e_res[d][p] > 0)
+
+            if m_name_str not in yearly_mc_logs[year]["inversions"]:
+                yearly_mc_logs[year]["inversions"][m_name_str] = []
+                yearly_mc_logs[year]["dips"][m_name_str] = []
+                yearly_mc_logs[year]["pairs"][m_name_str] = []
+                yearly_mc_logs[year]["mag"][m_name_str] = []
+                yearly_mc_logs[year]["gallagher"][m_name_str] = []
+                yearly_mc_logs[year]["weighted_gallagher"][m_name_str] = []
+                yearly_mc_logs[year]["coverage"][m_name_str] = []
+
+            yearly_mc_logs[year]["inversions"][m_name_str].append(mc_e_inv)
+            yearly_mc_logs[year]["dips"][m_name_str].append(mc_e_dips)
+            yearly_mc_logs[year]["pairs"][m_name_str].append(mc_e_pairs)
+            yearly_mc_logs[year]["mag"][m_name_str].append(mc_e_mag)
+            yearly_mc_logs[year]["gallagher"][m_name_str].append(g_e)
+            yearly_mc_logs[year]["weighted_gallagher"][m_name_str].append(wg_e)
+            yearly_mc_logs[year]["coverage"][m_name_str].append(cov_e)
+
+            meta_logs["inversions"][m_name_str].append(mc_e_inv)
+            meta_logs["dips"][m_name_str].append(mc_e_dips)
+            meta_logs["pairs"][m_name_str].append(mc_e_pairs)
+            meta_logs["mag"][m_name_str].append(mc_e_mag)
+            meta_logs["gallagher"][m_name_str].append(g_e)
+            meta_logs["weighted_gallagher"][m_name_str].append(wg_e)
+            meta_logs["coverage"][m_name_str].append(cov_e)
+
+        valid_sim_count += 1
+
+        if valid_sim_count % SIM_BATCH_SIZE == 0:
+            batch_count += 1
+            time.sleep(SIM_COOLING_PAUSE)
+
+    return valid_sim_count
+</file>
+
+<file path="reporting.py">
+import csv
+from typing import Any, Dict, List
+
+from config import BLUE, ENABLE_MONTE_CARLO, ENABLE_STAIRCASE_PLOTS, GREEN, RED, RESET, YELLOW
+from visuals_export import (
+    get_method_order_index,
+    plot_combined_year_comparison,
+    plot_method_all_years_comparison,
+    plot_monte_carlo_trends,
+    plot_staircase_sequence,
+    print_top_displacement_examples,
+    render_scorecard_table,
+)
+
+
+def render_final_reports(
+    all_method_names: List[str],
+    trackers: Dict[str, Any],
+    yearly_mc_logs: Dict[str, Any],
+    meta_logs: Dict[str, Any],
+    meta_mc_total_simulations: int,
+    historical_election_count: int,
+    global_max_possible_coverage: int,
+    master_csv_rows: List[List[Any]],
+    country_all_years_plot_data: Dict[str, Any],
+    country_name: str
+) -> None:
+    """Generates charts, prints final scorecards, rankings, and writes the output CSV."""
+    
+    # Regional Plot Generation
+    if ENABLE_MONTE_CARLO and yearly_mc_logs:
+        plot_monte_carlo_trends(country_name, yearly_mc_logs)
+
+    if not ENABLE_MONTE_CARLO and ENABLE_STAIRCASE_PLOTS and country_all_years_plot_data:
+        all_first_seat_indices = []
+        global_max_x_len = 0
+        global_max_y_seats = 0
+
+        for yr, yr_methods in country_all_years_plot_data.items():
+            for m_info in yr_methods:
+                entries = m_info["entries"]
+                if entries:
+                    global_max_x_len = max(global_max_x_len, len(entries))
+                    global_max_y_seats = max(global_max_y_seats, max(e[1] for e in entries))
+                    first_idx = next((i for i, e in enumerate(entries) if e[1] > 0), 0)
+                    all_first_seat_indices.append(first_idx)
+
+        country_earliest_idx = min(all_first_seat_indices) if all_first_seat_indices else 0
+        country_x_start = max(0, country_earliest_idx - 10)
+        country_x_end = global_max_x_len - 1 if global_max_x_len > 0 else 100
+        country_y_max = global_max_y_seats + 1
+        country_bounds = (country_x_start, country_x_end)
+
+        for yr in sorted(country_all_years_plot_data.keys()):
+            grid_methods = [m for m in country_all_years_plot_data[yr] if m["method_name"] != "Quadratic Pool Method"]
+            plot_combined_year_comparison(country_name, yr, grid_methods, country_bounds, country_y_max)
+
+        all_country_methods = []
+        for yr, yr_methods in country_all_years_plot_data.items():
+            for m_info in yr_methods:
+                if m_info["method_name"] not in all_country_methods:
+                    all_country_methods.append(m_info["method_name"])
+        all_country_methods.sort(key=lambda m: get_method_order_index(m))
+
+        for m_name in all_country_methods:
+            method_years_data = []
+            for yr in sorted(country_all_years_plot_data.keys()):
+                for m_info in country_all_years_plot_data[yr]:
+                    if m_info["method_name"] == m_name:
+                        method_years_data.append({
+                            "year": yr,
+                            "entries": m_info["entries"],
+                            "dips": m_info["dips"],
+                            "pairs": m_info["pairs"],
+                            "mag": m_info["mag"]
+                        })
+            plot_method_all_years_comparison(country_name, m_name, method_years_data, country_bounds, country_y_max)
+
+        for yr in sorted(country_all_years_plot_data.keys()):
+            for m_info in country_all_years_plot_data[yr]:
+                order_idx = get_method_order_index(m_info["method_name"])
+                plot_staircase_sequence(
+                    country_name, yr, m_info["method_name"], order_idx,
+                    m_info["entries"], m_info["dips"], m_info["pairs"], m_info["mag"],
+                    x_bounds=country_bounds, y_max=country_y_max
+                )
+
+    # Summaries Output
+    print("\n" + "#"*80)
+    print(" METRIC LEADERSHIP RADAR: GLOBAL META COMPARISON DASHBOARD")
+    print("#"*80)
+
+    if ENABLE_MONTE_CARLO:
+        print("\n================================================================================")
+        print(" 📅 YEAR-BY-YEAR MONTE CARLO STOCHASTIC SCORECARDS")
+        print("================================================================================")
+        
+        for year in sorted(yearly_mc_logs.keys()):
+            y_logs = yearly_mc_logs[year]
+            y_sim_count = len(y_logs["dips"]["Zurich DP"])
+            
+            print(f"\n" + "🎲 " * 40)
+            print(f" 🗓️ ELECTION YEAR {year} — MONTE CARLO SCORECARDS ({y_sim_count:,} SIMULATION ITERATIONS)")
+            print("🎲 " * 40)
+
+            render_scorecard_table(f"1. [{year}] SYSTEM ACCURACY (FEWEST INTRA-DISTRICT INVERSIONS)", y_logs["inversions"], y_sim_count, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+            render_scorecard_table(f"2. [{year}] STAIRCASE METHOD 1 (FEWEST GLOBAL LOCAL DIPS)", y_logs["dips"], y_sim_count, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+            render_scorecard_table(f"3. [{year}] STAIRCASE METHOD 2 (FEWEST GLOBAL DOMINANCE PAIRS)", y_logs["pairs"], y_sim_count, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+            render_scorecard_table(f"4. [{year}] STAIRCASE METHOD 3 (LOWEST GLOBAL DISPLACEMENT MAGNITUDE)", y_logs["mag"], y_sim_count, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+            render_scorecard_table(f"5. [{year}] LOCAL PROPORTIONALITY (UNWEIGHTED DISTRICT GALLAGHER)", y_logs["gallagher"], y_sim_count, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+            render_scorecard_table(f"6. [{year}] SEAT-WEIGHTED PROPORTIONALITY (LOWEST WEIGHTED GALLAGHER)", y_logs["weighted_gallagher"], y_sim_count, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+            render_scorecard_table(f"7. [{year}] GEOGRAPHIC FOOTPRINT SPREAD (HIGHEST ACTIVE CELLS)", y_logs["coverage"], y_sim_count, precision_val=0, higher_is_better=True, csv_accumulator=master_csv_rows)
+
+        print("\n" + "🏆 " * 40)
+        print(f" 🌟 OVERALL META MONTE CARLO STOCHASTIC SCORECARDS ({meta_mc_total_simulations:,} TOTAL SIMULATION ITERATIONS)")
+        print("🏆 " * 40)
+
+        master_csv_rows.append(["==============================================================================="])
+        master_csv_rows.append([f"🎲 OVERALL META MONTE CARLO STOCHASTIC SCORECARDS ({meta_mc_total_simulations:,} SIMULATION ITERATIONS)"])
+        master_csv_rows.append(["==============================================================================="])
+
+        render_scorecard_table("1. OVERALL SYSTEM ACCURACY (FEWEST INTRA-DISTRICT INVERSIONS)", meta_logs["inversions"], meta_mc_total_simulations, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+        render_scorecard_table("2. OVERALL STAIRCASE METHOD 1 (FEWEST GLOBAL LOCAL DIPS)", meta_logs["dips"], meta_mc_total_simulations, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+        render_scorecard_table("3. OVERALL STAIRCASE METHOD 2 (FEWEST GLOBAL DOMINANCE PAIRS)", meta_logs["pairs"], meta_mc_total_simulations, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+        render_scorecard_table("4. OVERALL STAIRCASE METHOD 3 (LOWEST GLOBAL DISPLACEMENT MAGNITUDE)", meta_logs["mag"], meta_mc_total_simulations, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+        render_scorecard_table("5. OVERALL LOCAL PROPORTIONALITY (UNWEIGHTED DISTRICT GALLAGHER)", meta_logs["gallagher"], meta_mc_total_simulations, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+        render_scorecard_table("6. OVERALL SEAT-WEIGHTED PROPORTIONALITY (LOWEST WEIGHTED GALLAGHER)", meta_logs["weighted_gallagher"], meta_mc_total_simulations, precision_val=2, higher_is_better=False, csv_accumulator=master_csv_rows)
+        render_scorecard_table("7. OVERALL GEOGRAPHIC FOOTPRINT SPREAD (HIGHEST ACTIVE CELLS)", meta_logs["coverage"], meta_mc_total_simulations, precision_val=0, higher_is_better=True, csv_accumulator=master_csv_rows)
+
+    else:
+        print("\n" + "🏛️ " * 40)
+        print(" METRIC RADAR CODES: HISTORICAL BASELINE RECORDS (RAW RUNS ONLY)")
+        print("🏛️ " * 40)
+
+        print("\n================================================================================")
+        print(" 📅 YEAR-BY-YEAR GLOBAL STAIRCASE METRIC BREAKDOWN & TAGGED SEQUENCES")
+        print("================================================================================")
+        
+        for year in sorted(trackers["yearly_staircase_metrics"].keys()):
+            print(f"\n" + "-"*90)
+            print(f" 🗓️  ELECTION YEAR {year} DIAGNOSTIC RADAR")
+            print("-" * 90)
+            print(f"{'Electoral Allocation System':<38} | {'Global Dips':<12} | {'Dominance Pairs':<15} | {'Displacement Depth':<18}")
+            print("-" * 90)
+            
+            for m_name in all_method_names:
+                m_data = trackers["yearly_staircase_metrics"][year].get(m_name, {})
+                dips = m_data.get("dips", 0)
+                pairs = m_data.get("pairs", 0)
+                mag = m_data.get("mag", 0)
+                print(f"{m_name:<38} | {dips:>12,} | {pairs:>15,} | {mag:>18,}")
+            
+            print(f"\n   --- Tagged Mandate Sequences (Least Votes to Most Votes: DistrictKeyMandates) ---")
+            for m_name in all_method_names:
+                seq = trackers["yearly_staircase_metrics"][year].get(m_name, {}).get("sequence", "")
+                print(f"   📌 Method: {m_name}")
+                print(f"      {seq}")
+
+            print(f"\n   --- Top 5 Displacement Depth Penalties for Year {year} ---")
+            for m_name in all_method_names:
+                m_incidents = trackers["yearly_displacement_incidents"][year].get(m_name, [])
+                print_top_displacement_examples(m_incidents, f"Method: {m_name} ({year})", top_n=5)
+
+        master_csv_rows.append(["==============================================================================="])
+        master_csv_rows.append(["🏛️  HISTORICAL ARCHIVE PERFORMANCE HIGHLIGHT SUMMARY (RAW ENGINE ALLOCATIONS)"])
+        master_csv_rows.append(["==============================================================================="])
+
+        accuracy_rankings = sorted(all_method_names, key=lambda core_name: trackers["global_inversion_tracker"][core_name])
+        print("\n================================================================================")
+        print(" 秤  HISTORICAL ARCHIVE RANKINGS BY ACCURACY (FEWEST INTRA-DISTRICT INVERSIONS)")
+        print("================================================================================")
+        for idx, name in enumerate(accuracy_rankings, 1):
+            inv_count = trackers["global_inversion_tracker"][name]
+            color_modifier = GREEN if idx == 1 else (RED if idx == len(accuracy_rankings) else RESET)
+            print(f"  {idx:<2}. {color_modifier}{name:<40}{RESET} : {inv_count:,} total intra-district inversion anomalies")
+
+        dips_rankings = sorted(all_method_names, key=lambda core_name: trackers["global_staircase_dips_tracker"][core_name])
+        print("\n================================================================================")
+        print(" 🪜 HISTORICAL ARCHIVE RANKINGS BY STAIRCASE METHOD 1 (FEWEST GLOBAL LOCAL DIPS)")
+        print("================================================================================")
+        for idx, name in enumerate(dips_rankings, 1):
+            dips_count = trackers["global_staircase_dips_tracker"][name]
+            color_modifier = GREEN if idx == 1 else (RED if idx == len(dips_rankings) else RESET)
+            print(f"  {idx:<2}. {color_modifier}{name:<40}{RESET} : {dips_count:,} total step dips in sorted array")
+
+        pairs_rankings = sorted(all_method_names, key=lambda core_name: trackers["global_staircase_pairs_tracker"][core_name])
+        print("\n================================================================================")
+        print(" 📈 HISTORICAL ARCHIVE RANKINGS BY STAIRCASE METHOD 2 (FEWEST GLOBAL DOMINANCE PAIRS)")
+        print("================================================================================")
+        for idx, name in enumerate(pairs_rankings, 1):
+            pairs_count = trackers["global_staircase_pairs_tracker"][name]
+            color_modifier = GREEN if idx == 1 else (RED if idx == len(pairs_rankings) else RESET)
+            print(f"  {idx:<2}. {color_modifier}{name:<40}{RESET} : {pairs_count:,} total dominance pairs")
+
+        mag_rankings = sorted(all_method_names, key=lambda core_name: trackers["global_staircase_magnitude_tracker"][core_name])
+        print("\n================================================================================")
+        print(" 💥 HISTORICAL ARCHIVE RANKINGS BY STAIRCASE METHOD 3 (LOWEST GLOBAL DISPLACEMENT MAGNITUDE)")
+        print("================================================================================")
+        for idx, name in enumerate(mag_rankings, 1):
+            mag_val = trackers["global_staircase_magnitude_tracker"][name]
+            color_modifier = GREEN if idx == 1 else (RED if idx == len(mag_rankings) else RESET)
+            print(f"  {idx:<2}. {color_modifier}{name:<40}{RESET} : {mag_val:,} total seats displacement depth penalty")
+
+        print("\n================================================================================")
+        print(" 🏆 ALL-TIME AGGREGATE TOP 5 DISPLACEMENT DEPTH PENALTIES BY METHOD")
+        print("================================================================================")
+        for m_name in all_method_names:
+            print_top_displacement_examples(trackers["all_time_displacement_incidents"][m_name], f"All-Time Method: {m_name}", top_n=5)
+
+        gallagher_rankings = sorted(all_method_names, key=lambda core_name: trackers["global_historical_gallagher_tracker"][core_name])
+        print("\n================================================================================")
+        print(" 📊 HISTORICAL ARCHIVE RANKINGS BY LOCAL PROPORTIONALITY (UNWEIGHTED DISTRICT GALLAGHER)")
+        print("================================================================================")
+        for idx, name in enumerate(gallagher_rankings, 1):
+            avg_g = trackers["global_historical_gallagher_tracker"][name] / max(1, historical_election_count)
+            color_modifier = GREEN if idx == 1 else (RED if idx == len(gallagher_rankings) else RESET)
+            print(f"  {idx:<2}. {color_modifier}{name:<40}{RESET} : {avg_g:.2f} average historical district Gallagher score")
+
+        weighted_gallagher_rankings = sorted(all_method_names, key=lambda core_name: trackers["global_historical_weighted_gallagher_tracker"][core_name])
+        print("\n================================================================================")
+        print(" 📊 HISTORICAL ARCHIVE RANKINGS BY SEAT-WEIGHTED PROPORTIONALITY (LOWEST WEIGHTED GALLAGHER)")
+        print("================================================================================")
+        for idx, name in enumerate(weighted_gallagher_rankings, 1):
+            avg_wg = trackers["global_historical_weighted_gallagher_tracker"][name] / max(1, historical_election_count)
+            color_modifier = GREEN if idx == 1 else (RED if idx == len(weighted_gallagher_rankings) else RESET)
+            print(f"  {idx:<2}. {color_modifier}{name:<40}{RESET} : {avg_wg:.2f} average historical seat-weighted district Gallagher score")
+
+        footprint_rankings = sorted(all_method_names, key=lambda core_name: trackers["global_coverage_tracker"][core_name], reverse=True)
+        print("\n================================================================================")
+        print(" 🗺️  HISTORICAL ARCHIVE RANKINGS BY GEOGRAPHIC FOOTPRINT (MAX SPREAD DIVERSITY)")
+        print("================================================================================")
+        for idx, name in enumerate(footprint_rankings, 1):
+            cov_count = trackers["global_coverage_tracker"][name]
+            cov_pct = (cov_count / global_max_possible_coverage) * 100
+            color_modifier = BLUE if idx == 1 else (YELLOW if idx == len(footprint_rankings) else RESET)
+            print(f"  {idx:<2}. {color_modifier}{name:<40}{RESET} : {cov_count:,} / {global_max_possible_coverage:,} active distribution cells ({cov_pct:.2f}%)")
+
+    master_report_path = "master_electoral_report.csv"
+    with open(master_report_path, "w", newline="", encoding="utf-8-sig") as master_f:
+        report_writer = csv.writer(master_f)
+        report_writer.writerows(master_csv_rows)
+</file>
+
+<file path="runner.py">
+from typing import Any, Dict, List, Tuple
+
+from baseline_engines import (
+    allocate_double_proportionality,
+    allocate_double_proportionality_danish,
+    dhondt_apportion,
+    get_national_party_caps,
+)
+from config import ENABLE_DANISH_DP, ENABLE_MONTE_CARLO
+from custom_methods import CUSTOM_METHODS_REGISTRY, compute_quotient_milestones
+from electoral_metrics import (
+    analyze_global_staircase_inversions,
+    calculate_mean_district_gallagher,
+    calculate_weighted_mean_district_gallagher,
+)
+from visuals_export import (
+    get_method_order_index,
+    print_quotient_efficiency_table,
+    print_structured_table,
+)
+
+
+def analyze_inversions(
+    votes_map: Dict[str, Dict[str, int]], 
+    allocations_map: Dict[str, Dict[str, int]], 
+    parties_lst: List[str]
+) -> Tuple[Dict[str, Dict[str, str]], str, int, List[str]]:
+    """Evaluates intra-district inversion pairs."""
+    marks = {d: {p: "" for p in parties_lst} for d in votes_map.keys()}
+    total_inversion_pairs = 0  
+    affected_districts = set()
+    detailed_logs = []
+
+    for d in votes_map.keys():
+        has_plus = {p: False for p in parties_lst}
+        has_minus = {p: False for p in parties_lst}
+        num_parties = len(parties_lst)
+
+        for i in range(num_parties):
+            pA = parties_lst[i]
+            for j in range(i + 1, num_parties):
+                pB = parties_lst[j]
+
+                if votes_map[d][pA] > votes_map[d][pB] and allocations_map[d][pA] < allocations_map[d][pB]:
+                    has_minus[pA] = True
+                    has_plus[pB] = True
+                    total_inversion_pairs += 1
+                    affected_districts.add(d)
+                    detailed_logs.append(
+                        f"    - Intra-District '{d}': {pA} had more votes ({votes_map[d][pA]:,}) than {pB} ({votes_map[d][pB]:,}) but received fewer seats ({allocations_map[d][pA]} vs {allocations_map[d][pB]})."
+                    )
+                elif votes_map[d][pB] > votes_map[d][pA] and allocations_map[d][pB] < allocations_map[d][pA]:
+                    has_minus[pB] = True
+                    has_plus[pA] = True
+                    total_inversion_pairs += 1
+                    affected_districts.add(d)
+                    detailed_logs.append(
+                        f"    - Intra-District '{d}': {pB} had more votes ({votes_map[d][pB]:,}) than {pA} ({votes_map[d][pA]:,}) but received fewer seats ({allocations_map[d][pB]} vs {allocations_map[d][pA]})."
+                    )
+
+        for p in parties_lst:
+            if has_plus[p] and has_minus[p]:
+                marks[d][p] = "+-"
+            elif has_plus[p]:
+                marks[d][p] = "+"
+            elif has_minus[p]:
+                marks[d][p] = "-"
+            else:
+                marks[d][p] = ""
+
+    analysis_str = f"Detected {total_inversion_pairs} intra-district inversion pair(s) across {len(affected_districts)} district(s)."
+    return marks, analysis_str, total_inversion_pairs, detailed_logs
+
+
+def run_historical_election(
+    country_name: str,
+    year: str,
+    dataset: Dict[str, Any],
+    d2l_map: Dict[str, str],
+    trackers: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """Runs allocation algorithms for a single historical election year."""
+    votes = dataset["votes"]
+    district_caps = dataset["district_caps"]
+    parties_list = dataset["parties_list"]
+    total_mandates_sum = sum(district_caps.values())
+
+    trackers["yearly_staircase_metrics"][year] = {m: {} for m in trackers["all_method_names"]}
+    trackers["yearly_displacement_incidents"][year] = {m: [] for m in trackers["all_method_names"]}
+    
+    year_methods_grid_data: List[Dict[str, Any]] = []
+
+    current_results: Dict[str, Dict[str, int]] = {d_key: {} for d_key in votes.keys()}
+    current_party_totals = {p: 0 for p in parties_list}
+    for d in votes.keys():
+        allocated_district_seats = dhondt_apportion(votes[d], district_caps[d])
+        for p in parties_list:
+            current_results[d][p] = allocated_district_seats.get(p, 0)
+            current_party_totals[p] += allocated_district_seats.get(p, 0)
+
+    national_party_votes = {p: sum(votes[d][p] for d in votes.keys()) for p in parties_list}
+    party_caps = get_national_party_caps(
+        country_name, national_party_votes, total_mandates_sum, dataset.get("national_mandates")
+    )
+
+    dp_results, dp_p_totals, district_weights, party_weights, dp_valid, dp_errors = allocate_double_proportionality(votes, party_caps, district_caps)
+    
+    if ENABLE_DANISH_DP:
+        danish_dp_results, danish_dp_p_totals, danish_district_weights, danish_party_weights, danish_valid, danish_errors = allocate_double_proportionality_danish(votes, party_caps, district_caps)
+    else:
+        danish_dp_results, danish_dp_p_totals, danish_district_weights, danish_party_weights, danish_valid, danish_errors = {}, {}, {}, {}, True, []
+
+    year_method_milestones: Dict[str, Dict[int, Dict[str, Any]]] = {}
+
+    current_marks, _, current_inv, _ = analyze_inversions(votes, current_results, parties_list)
+    dp_marks, _, dp_inv, _ = analyze_inversions(votes, dp_results, parties_list)
+
+    curr_dips, curr_pairs, curr_mag, _, curr_incidents, curr_seq, curr_entries = analyze_global_staircase_inversions(votes, current_results, parties_list, d2l_map)
+    trackers["yearly_staircase_metrics"][year]["Current District D'Hondt"] = {"dips": curr_dips, "pairs": curr_pairs, "mag": curr_mag, "sequence": curr_seq}
+    trackers["yearly_displacement_incidents"][year]["Current District D'Hondt"].extend(curr_incidents)
+    trackers["all_time_displacement_incidents"]["Current District D'Hondt"].extend(curr_incidents)
+    year_methods_grid_data.append({"method_name": "Current District D'Hondt", "entries": curr_entries, "dips": curr_dips, "pairs": curr_pairs, "mag": curr_mag})
+
+    dp_dips, dp_pairs, dp_mag, _, dp_incidents, dp_seq, dp_entries = analyze_global_staircase_inversions(votes, dp_results, parties_list, d2l_map)
+    trackers["yearly_staircase_metrics"][year]["Zurich DP"] = {"dips": dp_dips, "pairs": dp_pairs, "mag": dp_mag, "sequence": dp_seq}
+    trackers["yearly_displacement_incidents"][year]["Zurich DP"].extend(dp_incidents)
+    trackers["all_time_displacement_incidents"]["Zurich DP"].extend(dp_incidents)
+    year_methods_grid_data.append({"method_name": "Zurich DP", "entries": dp_entries, "dips": dp_dips, "pairs": dp_pairs, "mag": dp_mag})
+
+    if ENABLE_DANISH_DP:
+        danish_dp_marks, _, danish_dp_inv, _ = analyze_inversions(votes, danish_dp_results, parties_list)
+        danish_dips, danish_pairs, danish_mag, _, danish_incidents, danish_seq, danish_entries = analyze_global_staircase_inversions(votes, danish_dp_results, parties_list, d2l_map)
+        trackers["yearly_staircase_metrics"][year]["Danish DP"] = {"dips": danish_dips, "pairs": danish_pairs, "mag": danish_mag, "sequence": danish_seq}
+        trackers["yearly_displacement_incidents"][year]["Danish DP"].extend(danish_incidents)
+        trackers["all_time_displacement_incidents"]["Danish DP"].extend(danish_incidents)
+        year_methods_grid_data.append({"method_name": "Danish DP", "entries": danish_entries, "dips": danish_dips, "pairs": danish_pairs, "mag": danish_mag})
+
+        trackers["global_historical_gallagher_tracker"]["Danish DP"] += calculate_mean_district_gallagher(votes, danish_dp_results, parties_list)
+        trackers["global_historical_weighted_gallagher_tracker"]["Danish DP"] += calculate_weighted_mean_district_gallagher(votes, danish_dp_results, parties_list, district_caps)
+        trackers["global_inversion_tracker"]["Danish DP"] += danish_dp_inv
+        trackers["global_staircase_dips_tracker"]["Danish DP"] += danish_dips
+        trackers["global_staircase_pairs_tracker"]["Danish DP"] += danish_pairs
+        trackers["global_staircase_magnitude_tracker"]["Danish DP"] += danish_mag
+        trackers["global_coverage_tracker"]["Danish DP"] += sum(1 for d in votes.keys() for p in parties_list if danish_dp_results[d][p] > 0)
+
+    trackers["global_historical_gallagher_tracker"]["Current District D'Hondt"] += calculate_mean_district_gallagher(votes, current_results, parties_list)
+    trackers["global_historical_gallagher_tracker"]["Zurich DP"] += calculate_mean_district_gallagher(votes, dp_results, parties_list)
+
+    trackers["global_historical_weighted_gallagher_tracker"]["Current District D'Hondt"] += calculate_weighted_mean_district_gallagher(votes, current_results, parties_list, district_caps)
+    trackers["global_historical_weighted_gallagher_tracker"]["Zurich DP"] += calculate_weighted_mean_district_gallagher(votes, dp_results, parties_list, district_caps)
+
+    trackers["global_inversion_tracker"]["Current District D'Hondt"] += current_inv
+    trackers["global_inversion_tracker"]["Zurich DP"] += dp_inv
+
+    trackers["global_staircase_dips_tracker"]["Current District D'Hondt"] += curr_dips
+    trackers["global_staircase_dips_tracker"]["Zurich DP"] += dp_dips
+
+    trackers["global_staircase_pairs_tracker"]["Current District D'Hondt"] += curr_pairs
+    trackers["global_staircase_pairs_tracker"]["Zurich DP"] += dp_pairs
+
+    trackers["global_staircase_magnitude_tracker"]["Current District D'Hondt"] += curr_mag
+    trackers["global_staircase_magnitude_tracker"]["Zurich DP"] += dp_mag
+
+    trackers["global_coverage_tracker"]["Current District D'Hondt"] += sum(1 for d in votes.keys() for p in parties_list if current_results[d][p] > 0)
+    trackers["global_coverage_tracker"]["Zurich DP"] += sum(1 for d in votes.keys() for p in parties_list if dp_results[d][p] > 0)
+
+    extra_computed_methods = []
+    
+    for method_cfg in CUSTOM_METHODS_REGISTRY:
+        if not method_cfg.get("enabled", True): 
+            continue
+        if not ENABLE_MONTE_CARLO and not method_cfg.get("run_historical", True): 
+            continue
+
+        e_res, _, e_history = method_cfg["func"](votes, party_caps, district_caps, **method_cfg.get("kwargs", {}))
+        
+        e_milestones = compute_quotient_milestones(e_history, total_mandates_sum)
+        if method_cfg.get("show_console", True):
+            year_method_milestones[method_cfg["name"]] = e_milestones
+
+        if not ENABLE_MONTE_CARLO and method_cfg.get("show_excel", True):
+            for item in e_history:
+                trackers["country_excel_quotient_records"].append({
+                    "Year": year, "Method": method_cfg["name"], "Step": item["Step"], "District": item["District"],
+                    "Party": item["Party"], "Quotient": item["Quotient"], "Divisor": item["Divisor"],
+                    "Seat Attempt": item["Seat Attempt"], "Allocated": item["Allocated"], "Running Total": item["Running Total"]
+                })
+            trackers["country_milestone_summary_records"].append({
+                "Year": year, "Method": method_cfg["name"], "Total Mandates": total_mandates_sum, "Milestones": e_milestones
+            })
+
+        e_marks, _, e_inv, _ = analyze_inversions(votes, e_res, parties_list)
+        e_dips, e_pairs, e_mag, _, e_incidents, e_seq, e_entries = analyze_global_staircase_inversions(votes, e_res, parties_list, d2l_map)
+        e_cov = sum(1 for d in votes.keys() for p in parties_list if e_res[d][p] > 0)
+        
+        m_name_str = str(method_cfg["name"])
+        trackers["yearly_staircase_metrics"][year][m_name_str] = {"dips": e_dips, "pairs": e_pairs, "mag": e_mag, "sequence": e_seq}
+        trackers["yearly_displacement_incidents"][year][m_name_str].extend(e_incidents)
+        trackers["all_time_displacement_incidents"][m_name_str].extend(e_incidents)
+
+        trackers["global_historical_gallagher_tracker"][m_name_str] += calculate_mean_district_gallagher(votes, e_res, parties_list)
+        trackers["global_historical_weighted_gallagher_tracker"][m_name_str] += calculate_weighted_mean_district_gallagher(votes, e_res, parties_list, district_caps)
+        
+        trackers["global_inversion_tracker"][m_name_str] += e_inv
+        trackers["global_staircase_dips_tracker"][m_name_str] += e_dips
+        trackers["global_staircase_pairs_tracker"][m_name_str] += e_pairs
+        trackers["global_staircase_magnitude_tracker"][m_name_str] += e_mag
+        trackers["global_coverage_tracker"][m_name_str] += e_cov
+        
+        year_methods_grid_data.append({"method_name": m_name_str, "entries": e_entries, "dips": e_dips, "pairs": e_pairs, "mag": e_mag})
+        extra_computed_methods.append({"config": method_cfg, "results": e_res, "marks": e_marks})
+
+    year_methods_grid_data.sort(key=lambda x: get_method_order_index(x["method_name"]))
+
+    if not ENABLE_MONTE_CARLO:
+        party_vote_totals = {p: sum(votes[d][p] for d in votes.keys()) for p in parties_list}
+        
+        print_structured_table(f"({year}) 1. RAW BASE ELECTORAL VOTE DATA", votes, party_caps, party_vote_totals, district_caps, mode="votes")
+        print_structured_table(f"({year}) 2. CURRENT DISTRICT ELECTORAL SYSTEM (DISTRICT D'HONDT)", current_results, party_caps, current_party_totals, district_caps, mode="seats", marks=current_marks)
+        print_structured_table(f"({year}) 3. ZÜRICH DOUBLE PROPORTIONALITY GRID DISTRIBUTION", dp_results, party_caps, dp_p_totals, district_caps, mode="seats", marks=dp_marks, weights_r=district_weights, weights_c=party_weights, is_valid=dp_valid, errors=dp_errors)
+        
+        if ENABLE_DANISH_DP:
+            print_structured_table(f"({year}) 4. DANISH DOUBLE PROPORTIONALITY GRID DISTRIBUTION", danish_dp_results, party_caps, danish_dp_p_totals, district_caps, mode="seats", marks=danish_dp_marks, weights_r=danish_district_weights, weights_c=danish_party_weights, is_valid=danish_valid, errors=danish_errors)
+            diff_matrix = {d: {p: danish_dp_results[d][p] - dp_results[d][p] for p in parties_list} for d in votes.keys()}
+            diff_party_totals = {p: danish_dp_p_totals[p] - dp_p_totals[p] for p in parties_list}
+            zero_district_caps = {d: 0 for d in votes.keys()}
+            print_structured_table(f"({year}) 4b. COMPARISON DELTA SHEET: [DANISH DP] MINUS [ZURICH DP]", diff_matrix, party_caps, diff_party_totals, zero_district_caps, mode="diff", custom_row_totals=zero_district_caps)
+
+        for extra in extra_computed_methods:
+            if extra["config"].get("show_console", True):
+                extra_totals = {p: sum(extra["results"][d][p] for d in votes.keys()) for p in parties_list}
+                print_structured_table(f"({year}) METHOD: {extra['config']['name']}", extra["results"], party_caps, extra_totals, district_caps, mode="seats", marks=extra["marks"])
+
+        print_quotient_efficiency_table(f"QUOTIENT EFFICIENCY RADAR: {country_name.upper()} ({year})", year_method_milestones, total_mandates_sum)
+
+    return year_methods_grid_data
+</file>
+
+<file path="tune_2_speed.py">
+from tuning_engine import run_tuning
+
+MIN_CAP = 1
+MAX_CAP = 15
+
+if __name__ == "__main__":
+    run_tuning(
+        target_method_name="2-Speed",
+        tuning_parameters={
+            "round1_district_cap": ("int", MIN_CAP, MAX_CAP),
+        },
+        tuning_goals={
+            "unweighted_gallagher": ("min", 1),
+            "weighted_gallagher":   ("min", 1),
+            "inversions":           ("min", 1),
+            "dips":                 ("min", 0),
+            "pairs":                ("min", 0),
+            "magnitude":            ("min", 0),
+        },
+        sims_per_trial=30,
+        max_time_minutes=10,
+        cooling_pause_per_trial=1.5,
+        use_grid_search=True,   # Evaluated from MIN_CAP to MAX_CAP
+        show_all_trials=True    # Displays full clean summary table
+    )
+</file>
+
+<file path="tune_3_speed_formula_broad.py">
+from tuning_engine import run_tuning
+
+if __name__ == "__main__":
+    run_tuning(
+        target_method_name="Non-Formula Progressive",
+        tuning_parameters={
+            # Anchor at 1
+            "phase1_start": ("int", 1, 1),       # Fixed initial anchor at 1
+            
+            # VARIABLE PHASE 1 STEP:
+            # Allows initial steps of 3 (Danish), 4, 5, or 6 to suppress inversions natively
+            "phase1_step":  ("int", 3, 6),       
+            
+            # CONSTRAINED PHASE 1 COUNT:
+            # Enforces at least 2 seats in Phase 1 to prevent collapsing/bypassing Phase 1
+            "phase1_count": ("int", 1, 6),       
+            
+            # PHASE 2 ACCELERATION:
+            "phase2_step":  ("int", 4, 8),       # Mid-game acceleration step
+            "phase2_count": ("int", 1, 5),       # Seats spent in Phase 2
+            
+            # PHASE 3 TAIL DAMPENING:
+            "phase3_step":  ("int", 6, 14),      # Final dampening step
+        },
+        tuning_goals={
+            # MULTI-OBJECTIVE SEARCH:
+            "weighted_gallagher": ("min", 1),
+            "inversions":         ("min", 1),
+            
+            # Additional metrics (disabled):
+            "unweighted_gallagher": ("min", 0),
+            "dips":                 ("min", 0),
+            "pairs":                ("min", 0),
+            "magnitude":            ("min", 0),
+        },
+        sims_per_trial=50,             # Monte Carlo runs per trial
+        max_trials=200,                # Sample up to 200 trials via TPE
+        max_time_minutes=30,           # 30-minute safety limit
+        cooling_pause_per_trial=0.2,   # 0.2s CPU delay
+        use_grid_search=False,         # Smart Bayesian TPE sampling
+        show_all_trials=False,         # Quiet console streaming
+        pareto_only=True,              # Prints Pareto-optimal candidate set
+        aggregation_mode="mean",       # Standard average across all dataset years
+        show_per_year_breakdown=True,  # Per-dataset breakdown for top candidates
+    )
+</file>
+
+<file path="tune_non_formula_tight.py">
+from tuning_engine import run_tuning
+
+if __name__ == "__main__":
+    run_tuning(
+        target_method_name="Non-Formula Progressive",
+        tuning_parameters={
+            "phase1_start": ("int", 1, 1),     # Locked to 1
+            "phase1_step":  ("int", 3, 3),     # Locked to 3 (Danish default start step)
+            "phase1_count": ("int", 3, 7),     # Explores 3 to 7 initial seats
+            "phase2_gap":   ("int", 3, 6),     # Relative gap to start Phase 2
+            "phase2_step":  ("int", 4, 6),     # Divisor step for Phase 2
+            "phase2_count": ("int", 2, 7),     # Explores 2 to 7 intermediate seats
+            "phase3_gap":   ("int", 7, 25),    # High-resolution window for Phase 3 jump
+            "phase3_step":  ("int", 7, 10),    # Divisor step for tail phase
+        },
+        tuning_goals={
+            "unweighted_gallagher": ("min", 0),
+            "weighted_gallagher":   ("min", 1),
+            "inversions":           ("min", 1),
+            "dips":                 ("min", 0),
+            "pairs":                ("min", 0),
+            "magnitude":            ("min", 0),
+        },
+
+        sims_per_trial=50,            # 50 Monte Carlo simulations per trial to reduce noise
+        max_time_minutes=60,          # Hard safety limit (stops execution at 60 minutes)
+        cooling_pause_per_trial=0.5,  # Delay in seconds between trials to manage CPU load
+        
+        # ----------------------------------------------------------------------
+        # SEARCH STRATEGY & DISPLAY SWITCHES
+        # ----------------------------------------------------------------------
+        
+        # use_grid_search:
+        #   False = Smart/Adaptive Search (intelligently samples the 27,360 space)
+        #   True  = Exhaustive Grid Search (evaluates combinations sequentially 1-by-1)
+        use_grid_search=False,
+
+        # show_all_trials:
+        #   False = Quiet Mode (only logs new breakthrough Pareto winners in console)
+        #   True  = Verbose Mode (prints a log line for every single evaluated trial)
+        show_all_trials=False,
+
+        # pareto_only:
+        #   True  = Filters final summaries/reports to non-dominated optimal setups
+        #   False = Keeps all evaluated trials in final output tables
+        pareto_only=True,
+    )
+</file>
+
+<file path="tune_non_formula.py">
+from tuning_engine import run_tuning
+
+if __name__ == "__main__":
+    run_tuning(
+        target_method_name="Non-Formula Progressive",
+        tuning_parameters={
+            "phase1_start": ("int", 1, 2),
+            "phase1_step":  ("int", 3, 5),
+            "phase1_count": ("int", 4, 6),
+            "phase2_gap":   ("int", 2, 4),
+            "phase2_step":  ("int", 4, 6),
+            "phase2_count": ("int", 3, 5),
+            "phase3_gap":   ("int", 18, 30),
+            "phase3_step":  ("int", 4, 8),
+        },
+        tuning_goals={
+            "unweighted_gallagher": ("min", 0),
+            "weighted_gallagher":   ("min", 1),
+            "inversions":           ("min", 1),
+            "dips":                 ("min", 0),
+            "pairs":                ("min", 0),
+            "magnitude":            ("min", 0),
+        },
+        sims_per_trial=10,
+        max_time_minutes=30,
+        cooling_pause_per_trial=0.5,
+        use_grid_search=False,
+        show_all_trials=False,
+        pareto_only=True,  # Silence trial logs and output only Pareto bests
+    )
+</file>
+
+<file path="tuning_engine.py">
+import glob
+import hashlib
+import os
+import random
+import time
+from contextlib import nullcontext
+from typing import Any, Dict, List, Optional, Tuple, Union
+import optuna
+
+# Try importing wakepy to prevent system sleep during long tuning runs
+try:
+    from wakepy import keep
+    HAS_WAKEPY = True
+except ImportError:
+    HAS_WAKEPY = False
+
+from config import LOCAL_VARIATION, NATIONAL_VARIATION, RANDOM_SEED
+from data_parser import generate_district_letter_mapping, parse_stacked_country_file
+from baseline_engines import get_national_party_caps
+from custom_methods import CUSTOM_METHODS_REGISTRY
+from electoral_metrics import (
+    analyze_global_staircase_inversions,
+    calculate_mean_district_gallagher,
+    calculate_weighted_mean_district_gallagher,
+)
+from runner import analyze_inversions
+
+# Suppress verbose default Optuna per-trial console output
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+
+class TuningMonitorCallback:
+    """Optuna callback to manage thermal cooling and log real-time progress."""
+
+    def __init__(self, target_trials: Optional[int], timeout_seconds: Optional[int], cooling_pause: float):
+        self.target_trials = target_trials
+        self.timeout_seconds = timeout_seconds
+        self.cooling_pause = cooling_pause
+        self.start_time = time.time()
+        self.next_milestone_pct = 10
+
+    def __call__(self, study: optuna.Study, trial: optuna.trial.FrozenTrial):
+        n_done = len(study.trials)
+        elapsed_seconds = time.time() - self.start_time
+        elapsed_minutes = elapsed_seconds / 60.0
+
+        pareto_count = len(study.best_trials)
+        is_multi = len(study.directions) > 1
+
+        if is_multi:
+            m1_direction = study.directions[0]
+            if m1_direction == optuna.study.StudyDirection.MAXIMIZE:
+                leader = max(study.best_trials, key=lambda t: t.values[0]) if study.best_trials else None
+            else:
+                leader = min(study.best_trials, key=lambda t: t.values[0]) if study.best_trials else None
+
+            if leader:
+                params_str = ", ".join(f"{k}={v}" for k, v in leader.params.items())
+                best_info = f"Pareto Winners: {pareto_count} | Lead Candidate [{params_str}] (Metric #1: {leader.values[0]:.4f})"
+            else:
+                best_info = f"Pareto Winners: {pareto_count}"
+        else:
+            if study.best_value is not None:
+                params_str = ", ".join(f"{k}={v}" for k, v in study.best_params.items())
+                best_info = f"Best Score: {study.best_value:.4f} [{params_str}]"
+            else:
+                best_info = "Best Score: N/A"
+
+        if self.target_trials and self.target_trials > 0:
+            pct = (n_done / self.target_trials) * 100
+            if pct >= self.next_milestone_pct:
+                milestone_tag = int(self.next_milestone_pct)
+                print(f"📊 {milestone_tag}% done ({n_done}/{self.target_trials} runs, {elapsed_minutes:.1f} min) | {best_info}")
+                while self.next_milestone_pct <= pct:
+                    self.next_milestone_pct += 10
+        elif self.timeout_seconds and self.timeout_seconds > 0:
+            pct = (elapsed_seconds / self.timeout_seconds) * 100
+            if pct >= self.next_milestone_pct:
+                milestone_tag = int(self.next_milestone_pct)
+                tot_mins = self.timeout_seconds / 60.0
+                print(f"⏱️ {milestone_tag}% time elapsed ({n_done} runs, {elapsed_minutes:.1f}/{tot_mins:.1f} min) | {best_info}")
+                while self.next_milestone_pct <= pct:
+                    self.next_milestone_pct += 10
+
+        if self.cooling_pause > 0:
+            time.sleep(self.cooling_pause)
+
+
+def get_target_function(target_method_name: str):
+    """Finds the function corresponding to target_method_name in the registry."""
+    for method in CUSTOM_METHODS_REGISTRY:
+        if method["name"].lower() == target_method_name.lower():
+            return method["func"]
+    registered_names = [m["name"] for m in CUSTOM_METHODS_REGISTRY]
+    raise ValueError(f"Method '{target_method_name}' not found in CUSTOM_METHODS_REGISTRY. Available: {registered_names}")
+
+
+def run_tuning(
+    target_method_name: str,
+    tuning_parameters: Dict[str, Tuple[str, Any, Any]],
+    tuning_goals: Dict[str, Union[Tuple[str, int], bool, str]],
+    sims_per_trial: int = 200,
+    max_trials: Optional[int] = None,
+    max_time_minutes: Optional[int] = 30,
+    cooling_pause_per_trial: float = 1.5,
+    use_grid_search: bool = False,
+    show_all_trials: bool = False,
+    pareto_only: bool = False,
+    aggregation_mode: str = "mean",                 # "mean", "worst_case", or "weighted_year"
+    year_weights: Optional[Dict[int, float]] = None, # e.g. {2024: 4.0, 2022: 3.0, 2019: 2.0, 2015: 1.0}
+    show_per_year_breakdown: bool = True,           # Prints per-year detailed table at end
+):
+    # Calculate total discrete parameter space combinations
+    total_possible_combos = 1
+    for param_name, (param_type, min_v, max_v) in tuning_parameters.items():
+        if param_type == "int":
+            total_possible_combos *= (int(max_v) - int(min_v) + 1)
+
+    # Parse goals and their directions ("min" / "max")
+    enabled_goals_info: List[Tuple[str, str]] = []
+    for goal, setting in tuning_goals.items():
+        if isinstance(setting, (tuple, list)) and len(setting) == 2:
+            direction_raw, is_enabled = setting
+            if bool(is_enabled):
+                d_clean = "maximize" if str(direction_raw).lower() in ["max", "maximize"] else "minimize"
+                enabled_goals_info.append((goal, d_clean))
+        elif setting is True or (isinstance(setting, str) and setting.lower() in ["min", "minimize"]):
+            enabled_goals_info.append((goal, "minimize"))
+        elif isinstance(setting, str) and setting.lower() in ["max", "maximize"]:
+            enabled_goals_info.append((goal, "maximize"))
+
+    if not enabled_goals_info:
+        raise ValueError("At least one optimization goal in tuning_goals must be enabled.")
+
+    enabled_goal_keys = [g for g, _ in enabled_goals_info]
+    directions_list = [d for _, d in enabled_goals_info]
+    target_func = get_target_function(target_method_name)
+
+    # Configure Sampler Strategy
+    if use_grid_search:
+        search_space = {}
+        for param_name, (param_type, min_v, max_v) in tuning_parameters.items():
+            if param_type == "int":
+                search_space[param_name] = list(range(int(min_v), int(max_v) + 1))
+            else:
+                raise ValueError(f"Grid Search requires integer parameters. Got '{param_type}' for {param_name}.")
+        sampler = optuna.samplers.GridSampler(search_space)
+        actual_max_trials = max_trials if max_trials is not None else total_possible_combos
+        engine_mode = f"GRID SEARCH ({total_possible_combos:,} total combinations)"
+    else:
+        sampler = optuna.samplers.TPESampler() if len(enabled_goal_keys) == 1 else None
+        actual_max_trials = max_trials
+        engine_mode = f"SMART BAYESIAN SAMPLING ({total_possible_combos:,} total space)"
+
+    def objective(trial):
+        suggested_kwargs = {}
+        for param_name, (param_type, min_v, max_v) in tuning_parameters.items():
+            if param_type == "int":
+                suggested_kwargs[param_name] = trial.suggest_int(param_name, min_v, max_v)
+            elif param_type == "float":
+                suggested_kwargs[param_name] = trial.suggest_float(param_name, min_v, max_v)
+
+        # ----------------------------------------------------------------------
+        # DUPLICATE SKIPPING & AUTOMATIC EARLY STOPPING LOGIC
+        # ----------------------------------------------------------------------
+        completed_trials = [t for t in trial.study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+        past_param_sets = {tuple(sorted(t.params.items())) for t in completed_trials}
+        current_param_tuple = tuple(sorted(suggested_kwargs.items()))
+
+        if len(past_param_sets) >= total_possible_combos:
+            trial.study.stop()
+            raise optuna.exceptions.TrialPruned("Search space 100% exhausted.")
+
+        if current_param_tuple in past_param_sets:
+            raise optuna.exceptions.TrialPruned("Duplicate combination skipped.")
+
+        if len(past_param_sets) + 1 >= total_possible_combos:
+            trial.study.stop()
+        # ----------------------------------------------------------------------
+
+        data_files = sorted(glob.glob("data_*.csv"))
+        if not data_files:
+            raise FileNotFoundError("No 'data_*.csv' files found in workspace.")
+
+        # Structure to track detailed dataset/year-by-year results
+        # dataset_results[(country, year)][goal] = float
+        dataset_results: Dict[Tuple[str, int], Dict[str, float]] = {}
+
+        for file_path in data_files:
+            country_name = os.path.basename(file_path).replace("data_", "").replace(".csv", "").strip().title()
+            archive = parse_stacked_country_file(file_path)
+
+            if any(g in enabled_goal_keys for g in ["dips", "pairs", "magnitude"]):
+                all_districts = list(next(iter(archive.values()))["district_caps"].keys())
+                d2l_map, _ = generate_district_letter_mapping(all_districts)
+            else:
+                d2l_map = {}
+
+            for year, dataset in archive.items():
+                votes = dataset["votes"]
+                district_caps = dataset["district_caps"]
+                parties = dataset["parties_list"]
+                total_mandates = sum(district_caps.values())
+
+                seed_str = f"{country_name}_{year}_{RANDOM_SEED}"
+                hash_int = int(hashlib.sha256(seed_str.encode("utf-8")).hexdigest(), 16) % (2**32)
+                rng = random.Random(hash_int)
+
+                sim_accumulators = {goal: 0.0 for goal in enabled_goal_keys}
+                valid_sims = 0
+
+                while valid_sims < sims_per_trial:
+                    sim_votes = {d: {} for d in votes.keys()}
+                    national_swings = {p: rng.uniform(-NATIONAL_VARIATION / 100.0, NATIONAL_VARIATION / 100.0) for p in parties}
+
+                    for d in votes.keys():
+                        for p in parties:
+                            base_v = votes[d][p]
+                            local_var = rng.uniform(-LOCAL_VARIATION / 100.0, LOCAL_VARIATION / 100.0)
+                            combined_factor = 1.0 + national_swings[p] + local_var
+                            sim_votes[d][p] = max(0, int(round(base_v * combined_factor)))
+
+                    if any(sum(sim_votes[d].values()) == 0 for d in sim_votes.keys()):
+                        continue
+
+                    sim_nat_votes = {p: sum(sim_votes[d][p] for d in sim_votes.keys()) for p in parties}
+                    sim_party_caps = get_national_party_caps(country_name, sim_nat_votes, total_mandates, dataset.get("national_mandates"))
+
+                    if sum(sim_party_caps.values()) != total_mandates:
+                        continue
+
+                    allocations, _, _ = target_func(sim_votes, sim_party_caps, district_caps, **suggested_kwargs)
+
+                    if "unweighted_gallagher" in enabled_goal_keys:
+                        sim_accumulators["unweighted_gallagher"] += calculate_mean_district_gallagher(sim_votes, allocations, parties)
+
+                    if "weighted_gallagher" in enabled_goal_keys:
+                        sim_accumulators["weighted_gallagher"] += calculate_weighted_mean_district_gallagher(sim_votes, allocations, parties, district_caps)
+
+                    if "inversions" in enabled_goal_keys:
+                        _, _, inv_count, _ = analyze_inversions(sim_votes, allocations, parties)
+                        sim_accumulators["inversions"] += inv_count
+
+                    if any(g in enabled_goal_keys for g in ["dips", "pairs", "magnitude"]):
+                        dips, pairs, mag, _, _, _, _ = analyze_global_staircase_inversions(sim_votes, allocations, parties, d2l_map)
+                        if "dips" in enabled_goal_keys: sim_accumulators["dips"] += dips
+                        if "pairs" in enabled_goal_keys: sim_accumulators["pairs"] += pairs
+                        if "magnitude" in enabled_goal_keys: sim_accumulators["magnitude"] += mag
+
+                    valid_sims += 1
+
+                # Save dataset-level averages for this specific country + election year
+                ds_key = (country_name, int(year))
+                dataset_results[ds_key] = {
+                    goal: sim_accumulators[goal] / max(1, valid_sims)
+                    for goal in enabled_goal_keys
+                }
+
+        # Save per-dataset metrics to Optuna trial attributes for post-run analysis
+        trial.set_user_attr("per_year_breakdown", dataset_results)
+
+        # Aggregate metrics across datasets/years based on aggregation_mode
+        final_scores = []
+        for goal, direction in enabled_goals_info:
+            ds_values = [(yr, res[goal]) for (_, yr), res in dataset_results.items()]
+            vals = [v for _, v in ds_values]
+
+            if aggregation_mode == "worst_case":
+                # Minimax: Select worst score across all election datasets
+                score = max(vals) if direction == "minimize" else min(vals)
+            elif aggregation_mode == "weighted_year":
+                # Weighted average by year weights
+                tot_weight = 0.0
+                weighted_sum = 0.0
+                for yr, val in ds_values:
+                    w = year_weights.get(yr, 1.0) if year_weights else 1.0
+                    weighted_sum += val * w
+                    tot_weight += w
+                score = weighted_sum / max(1e-9, tot_weight)
+            else:
+                # Standard mean across all years
+                score = sum(vals) / max(1, len(vals))
+
+            final_scores.append(score)
+
+        return tuple(final_scores)
+
+    goals_display = [f"{g} ({d[:3]})" for g, d in enabled_goals_info]
+
+    print("=" * 80)
+    print(f"🎯 TUNING ENGINE — TARGET: [{target_method_name.upper()}]")
+    print("=" * 80)
+    print(f" • Search Strategy:         {engine_mode}")
+    print(f" • Aggregation Mode:        {aggregation_mode.upper()}")
+    if aggregation_mode == "weighted_year" and year_weights:
+        print(f" • Year Weights:            {year_weights}")
+    print(f" • Tuning Parameters:       {list(tuning_parameters.keys())}")
+    print(f" • Enabled Goals:           {goals_display}")
+    print(f" • Monte Carlo Sims/Trial:  {sims_per_trial}")
+    print(f" • Max Time Limit:          {max_time_minutes} minutes" if max_time_minutes else " • Max Time Limit:          Disabled")
+    print(f" • Thermal Cooling Pause:   {cooling_pause_per_trial}s")
+    print(f" • System Sleep Prevention: {'ENABLED (wakepy)' if HAS_WAKEPY else 'DISABLED'}")
+    print(f" • Pareto-Only Output:      {'ENABLED' if pareto_only else 'DISABLED'}")
+    print("=" * 80 + "\n")
+
+    timeout_sec = (max_time_minutes * 60) if max_time_minutes else None
+    monitor = TuningMonitorCallback(target_trials=actual_max_trials, timeout_seconds=timeout_sec, cooling_pause=cooling_pause_per_trial)
+    sleep_preventer = keep.running() if HAS_WAKEPY else nullcontext()
+
+    with sleep_preventer:
+        study = optuna.create_study(sampler=sampler, directions=directions_list)
+        study.optimize(objective, n_trials=actual_max_trials, timeout=timeout_sec, callbacks=[monitor])
+
+    # Run Diagnostics
+    completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    unique_param_sets = len({tuple(sorted(t.params.items())) for t in completed_trials})
+    pruned_trials = len([t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED])
+    elapsed_sec = time.time() - monitor.start_time
+
+    if unique_param_sets >= total_possible_combos:
+        stop_reason = "✅ Exhausted 100% of parameter space (Stopped Early)"
+    elif timeout_sec and elapsed_sec >= (timeout_sec - 2):
+        stop_reason = f"⏱️ Hit Time Limit ({max_time_minutes} minutes reached)"
+    else:
+        stop_reason = "Completed"
+
+    print("\n" + "=" * 80)
+    print("📊 RUN DIAGNOSTICS & COVERAGE REPORT")
+    print("=" * 80)
+    print(f" • Termination Reason:     {stop_reason}")
+    print(f" • Unique Combos Evaluated: {unique_param_sets:,} / {total_possible_combos:,} ({(unique_param_sets/total_possible_combos)*100:.2f}% coverage)")
+    print(f" • Duplicate Skips (0ms):   {pruned_trials}")
+    print("=" * 80)
+
+    # ANSI Escape Codes for Terminal Highlighting
+    C_RESET       = "\033[0m"
+    BG_PARETO     = "\033[42m\033[1;30m"      # Vibrant Green Background + Bold Black Text
+    BG_BEST       = "\033[48;5;208m\033[1;30m" # Vibrant Orange Background + Bold Black Text
+    BG_ZEBRA_EVEN = "\033[48;5;234m"          # Subtle Dark Gray Row Background
+    BG_ZEBRA_ODD  = "\033[48;5;237m"          # Slightly Lighter Gray Row Background
+
+    print("\n" + "=" * 80)
+    print("🏆 OPTIMIZATION COMPLETE (" + ("PARETO-ONLY " if pareto_only else "") + "RESULTS SUMMARY)")
+    print("=" * 80)
+    print("Legend:")
+    print(f" • {BG_PARETO} Green Background {C_RESET}   = Parameter combination is Pareto-Optimal (not dominated by any other value)")
+    print(f" • {BG_BEST} Orange Background {C_RESET} = Absolute best score achieved across all tested combinations (100%)")
+    print("=" * 80 + "\n")
+
+    p_headers_raw = [f"{p:<19}" for p in tuning_parameters.keys()]
+    g_headers_raw = [f"{g:<25}" for g in enabled_goal_keys]
+
+    header_str = " | ".join(p_headers_raw) + " | " + " | ".join(g_headers_raw)
+    divider_str = "-" * len(header_str)
+
+    print(header_str)
+    print(divider_str)
+
+    pareto_trial_numbers = {t.number for t in study.best_trials}
+    trials_to_show = study.best_trials if pareto_only else (study.trials if show_all_trials else study.best_trials)
+    valid_trials = [t for t in trials_to_show if t.values is not None]
+
+    best_per_metric = {}
+    for i, (goal, direction) in enumerate(enabled_goals_info):
+        vals = [t.values[i] for t in study.trials if t.values is not None]
+        best_per_metric[goal] = max(vals) if direction == "maximize" else min(vals)
+
+    first_param_name = list(tuning_parameters.keys())[0]
+    sorted_trials = sorted(valid_trials, key=lambda t: t.params.get(first_param_name, 0))
+
+    for row_idx, trial in enumerate(sorted_trials):
+        is_pareto = trial.number in pareto_trial_numbers
+        row_bg = BG_ZEBRA_ODD if (row_idx % 2 == 1) else BG_ZEBRA_EVEN
+
+        p_cells = []
+        for p in tuning_parameters.keys():
+            raw_p = f"{str(trial.params.get(p, 'N/A')):<19}"
+            if is_pareto:
+                p_cells.append(f"{BG_PARETO}{raw_p}{C_RESET}")
+            else:
+                p_cells.append(f"{row_bg}{raw_p}{C_RESET}")
+        p_vals = " | ".join(p_cells)
+
+        g_cells = []
+        for i, (goal, _) in enumerate(enabled_goals_info):
+            val = trial.values[i]
+            best_val = best_per_metric[goal]
+
+            if abs(best_val) > 1e-9:
+                pct = int(round((val / best_val) * 100))
+            else:
+                pct = 100
+
+            combined_str = f"{val:.4f} ({pct}%)"
+            raw_g = f"{combined_str:<25}"
+            
+            if abs(val - best_val) < 1e-6:
+                g_cells.append(f"{BG_BEST}{raw_g}{C_RESET}")
+            else:
+                g_cells.append(f"{row_bg}{raw_g}{C_RESET}")
+            
+        g_vals = " | ".join(g_cells)
+
+        print(f"{p_vals} | {g_vals}")
+
+    print(divider_str + "\n")
+
+    # --------------------------------------------------------------------------
+    # YEAR-BY-YEAR DETAILED BREAKDOWN TABLE
+    # --------------------------------------------------------------------------
+    if show_per_year_breakdown and valid_trials:
+        print("\n" + "=" * 80)
+        print("📅 PER-YEAR PERFORMANCE BREAKDOWN (PARETO TOP CANDIDATES)")
+        print("=" * 80)
+
+        for trial in sorted_trials:
+            breakdown = trial.user_attrs.get("per_year_breakdown", {})
+            if not breakdown:
+                continue
+
+            params_str = ", ".join(f"{k}={v}" for k, v in trial.params.items())
+            print(f"\n🔹 Candidate [{params_str}]:")
+            
+            y_headers = ["Country", "Year"] + [f"{g:<18}" for g in enabled_goal_keys]
+            y_header_str = f"   {' | '.join(y_headers)}"
+            print(y_header_str)
+            print("   " + "-" * (len(y_header_str) - 3))
+
+            sorted_ds_keys = sorted(breakdown.keys(), key=lambda x: (x[0], x[1]))
+            for country, yr in sorted_ds_keys:
+                metrics_map = breakdown[(country, yr)]
+                m_str = " | ".join(f"{metrics_map.get(g, 0.0):<18.4f}" for g in enabled_goal_keys)
+                print(f"   {country:<8} | {yr:<4} | {m_str}")
+        print("=" * 80 + "\n")
+</file>
+
+<file path="visuals_export.py">
+import csv
+import math
+import os
+from typing import Any, Dict, List, Optional, Tuple
+
+from config import (
+    ENABLE_MONTE_CARLO,
+    ENABLE_DANISH_DP,
+    ENABLE_STAIRCASE_PLOTS,
+    SHOW_PLOT_POPUPS,
+    SHOW_QUOTIENT_STATS_CONSOLE,
+    SHOW_QUOTIENT_STATS_EXCEL,
+    QUOTIENT_MILESTONES,
+    GREEN, RED, BLUE, YELLOW, RESET,
+    BG_RED_WHITE, BG_SHADE
+)
+from data_parser import sanitize_filename
+from custom_methods import CUSTOM_METHODS_REGISTRY
+
+# Try importing openpyxl for Excel export with fallback handling
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    HAS_OPENPYXL = True
+except ImportError:
+    HAS_OPENPYXL = False
+
+
+def get_dynamic_method_display_order() -> List[str]:
+    """Generates the master display order dynamically from baseline + custom registry."""
+    order = ["Current District D'Hondt", "Zurich DP"]
+    if ENABLE_DANISH_DP:
+        order.append("Danish DP")
+    for m in CUSTOM_METHODS_REGISTRY:
+        if m["name"] not in order:
+            order.append(m["name"])
+    return order
+
+
+def get_method_order_index(method_name: str) -> int:
+    """Returns the custom 1-based order index for a method."""
+    order_list = get_dynamic_method_display_order()
+    try:
+        return order_list.index(method_name) + 1
+    except ValueError:
+        return 999
+
+
+def print_district_legend_console(country_name: str, d2l_map: Dict[str, str]) -> None:
+    """Prints the district-to-letter legend once per country in the terminal."""
+    if ENABLE_MONTE_CARLO:
+        return
+    print("\n" + "="*80)
+    print(f" 🏷️  DISTRICT LETTER DICTIONARY LEGEND: {country_name.upper()}")
+    print("="*80)
+    for d_name, letter in d2l_map.items():
+        print(f"   [{letter:>2}] : {d_name}")
+    print("="*80 + "\n")
+
+
+def plot_staircase_sequence(
+    country_name: str,
+    year: str, 
+    method_name: str, 
+    order_idx: int,
+    entries: List[Tuple[int, int, str, str]], 
+    dips: int, 
+    pairs: int, 
+    mag: int,
+    x_bounds: Tuple[int, int],
+    y_max: int
+) -> None:
+    """Saves an individual high-resolution PNG chart to 'graph_inversions_<country_name>/'."""
+    if not ENABLE_STAIRCASE_PLOTS or ENABLE_MONTE_CARLO or not entries:
+        return
+
+    try:
+        import matplotlib
+        if not SHOW_PLOT_POPUPS:
+            matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("⚠️ matplotlib not installed. Skipping graph generation. (Install via: pip install matplotlib)")
+        return
+
+    folder_name = f"graph_inversions_{sanitize_filename(country_name).lower()}"
+    os.makedirs(folder_name, exist_ok=True)
+
+    x_vals = list(range(len(entries)))
+    y_seats = [e[1] for e in entries]
+
+    running_peak = []
+    curr_peak = 0
+    for s in y_seats:
+        if s > curr_peak:
+            curr_peak = s
+        running_peak.append(curr_peak)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    ax.plot(x_vals, running_peak, color='gray', linestyle='--', alpha=0.75, linewidth=1.5, label='Running Peak (M3 Reference)')
+    ax.fill_between(x_vals, y_seats, running_peak, color='red', alpha=0.18, label=f'Displacement Depth Gap (M3 = {mag})')
+    ax.step(x_vals, y_seats, where='mid', color='#1f77b4', linewidth=2.0, label='Allocated Mandates')
+
+    dip_x, dip_y = [], []
+    for i in range(len(y_seats) - 1):
+        if y_seats[i] > y_seats[i + 1]:
+            dip_x.append(i + 1)
+            dip_y.append(y_seats[i + 1])
+
+    if dip_x:
+        ax.scatter(dip_x, dip_y, color='red', zorder=5, s=35, label=f'Local Dips (M1 = {dips})')
+
+    ax.set_xlim(x_bounds[0], x_bounds[1])
+    ax.set_ylim(-0.5, y_max)
+
+    ax.set_title(f"Electoral Staircase Profile: {method_name} ({country_name.title()} - {year})\nLocal Dips (M1): {dips}  |  Dominance Pairs (M2): {pairs}  |  Displacement Depth (M3): {mag}", fontsize=11, fontweight='bold')
+    ax.set_xlabel("Ordinal Rank (Sorted by Raw Votes Ascending)", fontsize=10)
+    ax.set_ylabel("Mandates Allocated", fontsize=10)
+    ax.grid(True, linestyle=':', alpha=0.6)
+    ax.legend(loc='upper left', frameon=True)
+
+    plt.tight_layout()
+
+    filename = f"{year}_{order_idx}_{sanitize_filename(method_name)}.png"
+    file_path = os.path.join(folder_name, filename)
+    plt.savefig(file_path, dpi=200)
+
+    if SHOW_PLOT_POPUPS:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def plot_combined_year_comparison(
+    country_name: str,
+    year: str,
+    methods_data: List[Dict[str, Any]],
+    x_bounds: Tuple[int, int],
+    y_max: int
+) -> None:
+    """Generates a grid containing side-by-side subplots for methods in an election year."""
+    if not ENABLE_STAIRCASE_PLOTS or ENABLE_MONTE_CARLO or not methods_data:
+        return
+
+    try:
+        import matplotlib
+        if not SHOW_PLOT_POPUPS:
+            matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    folder_name = f"graph_inversions_{sanitize_filename(country_name).lower()}"
+    os.makedirs(folder_name, exist_ok=True)
+
+    num_methods = len(methods_data)
+    cols = 2
+    rows = math.ceil(num_methods / cols)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(16, 4.5 * rows), sharex=True, sharey=True)
+    axes_flat = axes.flatten() if num_methods > 1 else [axes]
+
+    for idx, m_info in enumerate(methods_data):
+        ax = axes_flat[idx]
+        method_name = m_info["method_name"]
+        entries = m_info["entries"]
+        dips = m_info["dips"]
+        pairs = m_info["pairs"]
+        mag = m_info["mag"]
+
+        x_vals = list(range(len(entries)))
+        y_seats = [e[1] for e in entries]
+
+        running_peak = []
+        curr_peak = 0
+        for s in y_seats:
+            if s > curr_peak:
+                curr_peak = s
+            running_peak.append(curr_peak)
+
+        ax.plot(x_vals, running_peak, color='gray', linestyle='--', alpha=0.7, linewidth=1.2)
+        ax.fill_between(x_vals, y_seats, running_peak, color='red', alpha=0.15)
+        ax.step(x_vals, y_seats, where='mid', color='#1f77b4', linewidth=1.8)
+
+        dip_x, dip_y = [], []
+        for i in range(len(y_seats) - 1):
+            if y_seats[i] > y_seats[i + 1]:
+                dip_x.append(i + 1)
+                dip_y.append(y_seats[i + 1])
+
+        if dip_x:
+            ax.scatter(dip_x, dip_y, color='red', zorder=5, s=25)
+
+        ax.set_xlim(x_bounds[0], x_bounds[1])
+        ax.set_ylim(-0.5, y_max)
+
+        ax.set_title(f"{method_name}\nM1 (Dips): {dips} | M2 (Pairs): {pairs} | M3 (Depth): {mag}", fontsize=10, fontweight='bold')
+        ax.grid(True, linestyle=':', alpha=0.5)
+
+    for idx in range(num_methods, len(axes_flat)):
+        fig.delaxes(axes_flat[idx])
+
+    fig.suptitle(f"SIDE-BY-SIDE ELECTORAL STAIRCASE COMPARISON: {country_name.upper()} ({year})", fontsize=14, fontweight='bold')
+    fig.text(0.5, 0.01, "Ordinal Rank (Sorted by Raw Votes Ascending)", ha='center', fontsize=11)
+    fig.text(0.01, 0.5, "Mandates Allocated", va='center', rotation='vertical', fontsize=11)
+
+    plt.tight_layout(rect=[0.02, 0.02, 0.98, 0.96])
+
+    combined_file = os.path.join(folder_name, f"{year}_COMPARE_ALL_METHODS.png")
+    plt.savefig(combined_file, dpi=200)
+
+    if SHOW_PLOT_POPUPS:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    print(f" {GREEN}🖼️  YEARLY COMPARISON GRID GENERATED:{RESET} '{combined_file}'")
+
+
+def plot_method_all_years_comparison(
+    country_name: str,
+    method_name: str,
+    year_data_list: List[Dict[str, Any]],
+    x_bounds: Tuple[int, int],
+    y_max: int
+) -> None:
+    """Generates a master grid image containing subplots for ONE method across ALL election years."""
+    if not ENABLE_STAIRCASE_PLOTS or ENABLE_MONTE_CARLO or not year_data_list:
+        return
+
+    try:
+        import matplotlib
+        if not SHOW_PLOT_POPUPS:
+            matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    folder_name = f"graph_inversions_{sanitize_filename(country_name).lower()}"
+    os.makedirs(folder_name, exist_ok=True)
+
+    num_years = len(year_data_list)
+    cols = 3 if num_years >= 5 else 2
+    rows = math.ceil(num_years / cols)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(5.5 * cols, 4.0 * rows), sharex=True, sharey=True)
+    axes_flat = axes.flatten() if num_years > 1 else [axes]
+
+    for idx, y_info in enumerate(year_data_list):
+        ax = axes_flat[idx]
+        year_str = y_info["year"]
+        entries = y_info["entries"]
+        dips = y_info["dips"]
+        pairs = y_info["pairs"]
+        mag = y_info["mag"]
+
+        x_vals = list(range(len(entries)))
+        y_seats = [e[1] for e in entries]
+
+        running_peak = []
+        curr_peak = 0
+        for s in y_seats:
+            if s > curr_peak:
+                curr_peak = s
+            running_peak.append(curr_peak)
+
+        ax.plot(x_vals, running_peak, color='gray', linestyle='--', alpha=0.7, linewidth=1.2)
+        ax.fill_between(x_vals, y_seats, running_peak, color='red', alpha=0.15)
+        ax.step(x_vals, y_seats, where='mid', color='#1f77b4', linewidth=1.8)
+
+        dip_x, dip_y = [], []
+        for i in range(len(y_seats) - 1):
+            if y_seats[i] > y_seats[i + 1]:
+                dip_x.append(i + 1)
+                dip_y.append(y_seats[i + 1])
+
+        if dip_x:
+            ax.scatter(dip_x, dip_y, color='red', zorder=5, s=25)
+
+        ax.set_xlim(x_bounds[0], x_bounds[1])
+        ax.set_ylim(-0.5, y_max)
+
+        ax.set_title(f"Year {year_str}\nM1 (Dips): {dips} | M2 (Pairs): {pairs} | M3 (Depth): {mag}", fontsize=10, fontweight='bold')
+        ax.grid(True, linestyle=':', alpha=0.5)
+
+    for idx in range(num_years, len(axes_flat)):
+        fig.delaxes(axes_flat[idx])
+
+    fig.suptitle(f"MULTI-YEAR ELECTORAL STAIRCASE EVOLUTION: {method_name.upper()} ({country_name.upper()})", fontsize=14, fontweight='bold')
+    fig.text(0.5, 0.01, "Ordinal Rank (Sorted by Raw Votes Ascending)", ha='center', fontsize=11)
+    fig.text(0.01, 0.5, "Mandates Allocated", va='center', rotation='vertical', fontsize=11)
+
+    plt.tight_layout(rect=[0.02, 0.02, 0.98, 0.96])
+
+    combined_file = os.path.join(folder_name, f"COMPARE_{sanitize_filename(method_name)}_ALL_YEARS.png")
+    plt.savefig(combined_file, dpi=200)
+
+    if SHOW_PLOT_POPUPS:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    print(f" {GREEN}🖼️  MULTI-YEAR METHOD COMPARISON GRID GENERATED:{RESET} '{combined_file}'")
+
+
+def plot_monte_carlo_trends(
+    country_name: str, 
+    yearly_mc_logs: Dict[str, Dict[str, Dict[str, List[Any]]]]
+) -> None:
+    """Plots trend lines across chronological election years with 5th-95th percentile error bars."""
+    if not ENABLE_MONTE_CARLO or not yearly_mc_logs:
+        return
+
+    try:
+        import matplotlib
+        if not SHOW_PLOT_POPUPS:
+            matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("⚠️ matplotlib not installed. Skipping Monte Carlo trend plots.")
+        return
+
+    folder_name = f"{sanitize_filename(country_name).lower()}_trends"
+    os.makedirs(folder_name, exist_ok=True)
+
+    sorted_years = sorted(yearly_mc_logs.keys())
+    x_indices = list(range(len(sorted_years)))
+
+    target_methods = [
+        ("Zurich DP", -0.2, "#1f77b4", "^"),                          # Left offset, Blue triangle
+        ("Current District D'Hondt", 0.0, "#d62728", "o"),             # Center offset, Red circle
+        ("Exquisite Progressive Pool Method", 0.2, "#2ca02c", "s")     # Right offset, Green square
+    ]
+
+    metrics_to_plot = [
+        ("inversions", "Intra-District Inversions (Accuracy)", "Inversion Count", "Intra_District_Inversions"),
+        ("dips", "Global Local Dips (M1)", "Dip Count", "Global_Local_Dips"),
+        ("pairs", "Global Dominance Pairs (M2)", "Pair Count", "Global_Dominance_Pairs"),
+        ("mag", "Global Displacement Magnitude (M3)", "Displacement Seat Depth", "Displacement_Magnitude"),
+        ("gallagher", "Unweighted District Gallagher Index", "Gallagher Score", "Unweighted_Gallagher"),
+        ("weighted_gallagher", "Seat-Weighted District Gallagher Index", "Weighted Gallagher Score", "Weighted_Gallagher"),
+        ("coverage", "Geographic Footprint (Active Seat Cells)", "Active Cells Count", "Geographic_Footprint")
+    ]
+
+    for metric_key, metric_title, y_label, file_suffix in metrics_to_plot:
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        for m_name, x_offset, color_code, marker_style in target_methods:
+            means = []
+            err_lowers = []
+            err_uppers = []
+            x_positions = []
+
+            for idx, yr in enumerate(sorted_years):
+                vals = yearly_mc_logs[yr][metric_key].get(m_name, [])
+                if not vals:
+                    continue
+                sorted_vals = sorted(vals)
+                mean_v = sum(sorted_vals) / len(sorted_vals)
+                p05 = sorted_vals[int(len(sorted_vals) * 0.05)]
+                p95 = sorted_vals[min(len(sorted_vals) - 1, int(len(sorted_vals) * 0.95))]
+
+                means.append(mean_v)
+                err_lowers.append(mean_v - p05)
+                err_uppers.append(p95 - mean_v)
+                x_positions.append(idx + x_offset)
+
+            if means:
+                ax.errorbar(
+                    x_positions, means, 
+                    yerr=[err_lowers, err_uppers], 
+                    fmt=f"{marker_style}-", 
+                    color=color_code, 
+                    ecolor=color_code,
+                    capsize=4, 
+                    capthick=1.5,
+                    linewidth=1.8, 
+                    label=m_name
+                )
+
+        ax.set_xticks(x_indices)
+        ax.set_xticklabels(sorted_years, fontsize=10, fontweight='bold')
+        ax.set_xlabel("Election Year (Chronological)", fontsize=11)
+        ax.set_ylabel(y_label, fontsize=11)
+        ax.set_title(f"Monte Carlo Trend ({country_name.title()}): {metric_title}\n(Points = Mean, Bars = 5th to 95th Percentile Range)", fontsize=11, fontweight='bold')
+        ax.grid(True, linestyle=':', alpha=0.6)
+        ax.legend(loc='best', frameon=True)
+
+        plt.tight_layout()
+        file_path = os.path.join(folder_name, f"TREND_{file_suffix}.png")
+        plt.savefig(file_path, dpi=200)
+
+        if SHOW_PLOT_POPUPS:
+            plt.show()
+        else:
+            plt.close(fig)
+
+        print(f" {GREEN}📈 MONTE CARLO TREND GRAPH GENERATED:{RESET} '{file_path}'")
+
+
+def print_quotient_efficiency_table(
+    title: str, 
+    method_milestones: Dict[str, Dict[int, Dict[str, Any]]], 
+    total_mandates: int
+) -> None:
+    if not SHOW_QUOTIENT_STATS_CONSOLE or ENABLE_MONTE_CARLO:
+        return
+
+    print("\n" + "="*110)
+    print(f" 📈 {title} — QUOTIENT EVALUATION MILESTONES (Total Mandates: {total_mandates})")
+    print("="*110)
+    
+    header_str = f"{'Pool Method':<35} | " + " | ".join(f"{str(p)+'%':>6}" for p in QUOTIENT_MILESTONES) + " | Total Skipped"
+    print(header_str)
+    print("-" * len(header_str))
+
+    for idx, (method_name, m_dict) in enumerate(method_milestones.items()):
+        row_bg = BG_SHADE if idx % 2 != 0 else ""
+        row_str = f"{row_bg}{method_name:<35}\033[0m | "
+        cols = []
+        for p in QUOTIENT_MILESTONES:
+            q_eval = m_dict.get(p, {}).get("quotients_eval", 0)
+            cols.append(f"{q_eval:>6}")
+        row_str += " | ".join(cols)
+        
+        final_skipped = m_dict.get(100, {}).get("skipped", 0)
+        row_str += f" | {final_skipped:>13,}"
+        print(row_str)
+
+    print("-" * len(header_str))
+    print()
+
+
+def export_quotient_analysis_excel(
+    country_name: str, 
+    quotient_records: List[Dict[str, Any]], 
+    milestone_summary_records: Optional[List[Dict[str, Any]]] = None,
+    d2l_map: Optional[Dict[str, str]] = None
+) -> None:
+    if not quotient_records:
+        return
+
+    excel_filename = f"{country_name}_quotient_analysis.xlsx"
+    csv_filename = f"{country_name}_quotient_analysis.csv"
+
+    if HAS_OPENPYXL:
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        font_title = Font(name="Calibri", size=14, bold=True, color="1F4E78")
+        fill_header = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        fill_allocated = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+        fill_skipped = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+        border_thin = Border(
+            left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
+            top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
+        )
+        align_center = Alignment(horizontal='center', vertical='center')
+        align_right = Alignment(horizontal='right', vertical='center')
+        align_left = Alignment(horizontal='left', vertical='center')
+
+        # SHEET 0: District Letter Mapping Legend
+        if d2l_map:
+            ws_leg = wb.create_sheet(title="District Key Legend")
+            ws_leg.views.sheetView[0].showGridLines = True
+            ws_leg.cell(row=1, column=1, value=f"{country_name.upper()} — DISTRICT LETTER DICTIONARY LEGEND").font = font_title
+            
+            leg_headers = ["Letter Key", "District Name"]
+            for col_num, h_text in enumerate(leg_headers, 1):
+                cell = ws_leg.cell(row=3, column=col_num, value=h_text)
+                cell.font = font_header
+                cell.fill = fill_header
+                cell.alignment = align_center
+
+            for r_idx, (d_name, letter) in enumerate(d2l_map.items(), start=4):
+                c1 = ws_leg.cell(row=r_idx, column=1, value=letter)
+                c2 = ws_leg.cell(row=r_idx, column=2, value=d_name)
+                c1.alignment = align_center
+                c2.alignment = align_left
+                c1.border = border_thin
+                c2.border = border_thin
+
+        # SHEET 1: Quotient Efficiency Milestones Summary
+        if SHOW_QUOTIENT_STATS_EXCEL and milestone_summary_records:
+            ws_eff = wb.create_sheet(title="Efficiency Milestones")
+            ws_eff.views.sheetView[0].showGridLines = True
+
+            ws_eff.cell(row=1, column=1, value=f"{country_name.upper()} — POOL ALLOCATION QUOTIENT EFFICIENCY SUMMARY").font = font_title
+
+            eff_headers = ["Year", "Pool Method", "Total Mandates"] + [f"{p}% Seats" for p in QUOTIENT_MILESTONES] + ["Total Skipped", "Final Efficiency %"]
+            for col_num, h_text in enumerate(eff_headers, 1):
+                cell = ws_eff.cell(row=3, column=col_num, value=h_text)
+                cell.font = font_header
+                cell.fill = fill_header
+                cell.alignment = align_center
+
+            for row_idx, rec in enumerate(milestone_summary_records, start=4):
+                m_dict = rec["Milestones"]
+                total_m = rec["Total Mandates"]
+                final_skipped = m_dict.get(100, {}).get("skipped", 0)
+                final_eff = m_dict.get(100, {}).get("efficiency_pct", 100.0)
+
+                row_vals = [rec["Year"], rec["Method"], total_m]
+                for p in QUOTIENT_MILESTONES:
+                    row_vals.append(m_dict.get(p, {}).get("quotients_eval", 0))
+                row_vals.extend([final_skipped, f"{final_eff:.1f}%"])
+
+                for col_idx, val in enumerate(row_vals, start=1):
+                    cell = ws_eff.cell(row=row_idx, column=col_idx, value=val)
+                    cell.border = border_thin
+                    if col_idx in (1, 2):
+                        cell.alignment = align_left
+                    elif col_idx == len(row_vals):
+                        cell.alignment = align_right
+                    else:
+                        cell.alignment = align_center
+
+        # SHEET 2: Master All Quotients Log
+        ws_master = wb.create_sheet(title="Master All Quotients")
+        ws_master.views.sheetView[0].showGridLines = True
+
+        ws_master.cell(row=1, column=1, value=f"{country_name.upper()} ELECTORAL POOL ALLOCATION — MASTER QUOTIENT ANALYSIS LOG").font = font_title
+        
+        master_headers = ["Year", "Pool Method", "Rank/Step", "District", "Party", "Quotient", "Divisor Used", "Seat Attempt #", "Allocated?", "Running Total"]
+        for col_num, h_text in enumerate(master_headers, 1):
+            cell = ws_master.cell(row=3, column=col_num, value=h_text)
+            cell.font = font_header
+            cell.fill = fill_header
+            cell.alignment = align_center
+
+        for row_idx, rec in enumerate(quotient_records, start=4):
+            is_yes = rec["Allocated"] == "Yes"
+            current_fill = fill_allocated if is_yes else fill_skipped
+
+            row_data = [
+                (rec["Year"], align_center, "@"),
+                (rec["Method"], align_left, "@"),
+                (rec["Step"], align_center, "0"),
+                (rec["District"], align_left, "@"),
+                (rec["Party"], align_left, "@"),
+                (rec["Quotient"], align_right, "0.0000"),
+                (rec["Divisor"], align_right, "0"),
+                (rec["Seat Attempt"], align_center, "0"),
+                (rec["Allocated"], align_center, "@"),
+                (rec["Running Total"], align_center, "0")
+            ]
+
+            for col_idx, (val, align, num_fmt) in enumerate(row_data, start=1):
+                cell = ws_master.cell(row=row_idx, column=col_idx, value=val)
+                cell.fill = current_fill
+                cell.alignment = align
+                cell.border = border_thin
+                cell.number_format = num_fmt
+
+        for ws_sheet in wb.worksheets:
+            for col in ws_sheet.columns:
+                max_len = 0
+                col_letter = get_column_letter(col[0].column)
+                for cell in col:
+                    if cell.row == 1: continue
+                    val_str = str(cell.value or "")
+                    if len(val_str) > max_len: max_len = len(val_str)
+                ws_sheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+        wb.save(excel_filename)
+        print(f" {GREEN}✓ EXCEL QUOTIENT ANALYSIS GENERATED:{RESET} '{excel_filename}' ({len(quotient_records):,} steps logged)")
+
+    else:
+        with open(csv_filename, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Year", "Pool Method", "Rank/Step", "District", "Party", "Quotient", "Divisor Used", "Seat Attempt #", "Allocated?", "Running Total"])
+            for rec in quotient_records:
+                writer.writerow([
+                    rec["Year"], rec["Method"], rec["Step"], rec["District"], rec["Party"],
+                    f"{rec['Quotient']:.4f}", rec["Divisor"], rec["Seat Attempt"], rec["Allocated"], rec["Running Total"]
+                ])
+        print(f" {GREEN}✓ CSV QUOTIENT ANALYSIS GENERATED:{RESET} '{csv_filename}' ({len(quotient_records):,} steps logged)")
+
+
+def print_top_displacement_examples(incidents: List[Dict[str, Any]], title: str, top_n: int = 5) -> None:
+    if not incidents:
+        print(f"   {title}: 0 displacement depth gap incidents detected.")
+        return
+    
+    sorted_inc = sorted(incidents, key=lambda x: (x.get("gap", x.get("displacement_depth", 0)), x.get("victim_votes", 0)), reverse=True)
+    unique_inc = []
+    seen = set()
+    for inc in sorted_inc:
+        key = (inc.get("peak_party"), inc.get("peak_district"), inc.get("victim_party"), inc.get("victim_district"), inc.get("gap", inc.get("displacement_depth", 0)))
+        if key not in seen:
+            seen.add(key)
+            unique_inc.append(inc)
+
+    print(f"\n   📌 {title} (Top {min(top_n, len(unique_inc))} Displacement Depth Penalties):")
+    for idx, inc in enumerate(unique_inc[:top_n], 1):
+        if "peak_party" in inc:
+            print(
+                f"      {idx}. Party '{inc['peak_party']}' in '{inc['peak_district']}' got {inc['peak_seats']} seat(s) with {inc['peak_votes']:,} votes, "
+                f"while '{inc['victim_party']}' in '{inc['victim_district']}' got only {inc['victim_seats']} seat(s) despite having {inc['victim_votes']:,} votes "
+                f"→ [Displacement Gap: {inc['gap']} seat(s)]"
+            )
+        else:
+            print(
+                f"      {idx}. District '{inc.get('district')}' | Victim: '{inc.get('victim_party')}' | "
+                f"Beneficiary: '{inc.get('beneficiary_party')}' → -{inc.get('displacement_depth')} seats"
+            )
+
+
+def print_structured_table(
+    title: str, 
+    matrix: Dict[str, Dict[str, int]], 
+    party_caps: Dict[str, int], 
+    party_totals: Dict[str, int], 
+    district_caps: Dict[str, int], 
+    mode: str = "seats", 
+    marks: Optional[Dict[str, Dict[str, str]]] = None, 
+    weights_r: Optional[Dict[str, float]] = None, 
+    weights_c: Optional[Dict[str, float]] = None, 
+    custom_row_totals: Optional[Dict[str, int]] = None,
+    is_valid: bool = True,
+    errors: Optional[List[str]] = None
+) -> None:
+    if ENABLE_MONTE_CARLO:
+        return
+        
+    print("\n" + "="*80)
+    if not is_valid and errors:
+        print(f"{BG_RED_WHITE} ❌ {title} — INTEGRITY FAILURE ({len(errors)} ERRORS DETECTED) {RESET}")
+        print("="*80)
+        print(f"{RED} ⚠️ WARNING DETAILS:{RESET}")
+        for err in errors:
+            print(f"{RED}   - {err}{RESET}")
+        print("-" * 80)
+    else:
+        print(f" {title} ")
+        print("="*80)
+    
+    print(f"{'District':<20}", end="")
+    for party in party_caps.keys():
+        print(f"{party:>10}", end="")
+    print(f"{'Total':>10} {'(Weight)':>14}" if weights_r else f"{'Total':>10}")
+    print("-" * (20 + 10 * len(party_caps) + (25 if weights_r else 10)))
+
+    for idx, (district, allocations) in enumerate(matrix.items()):
+        row_bg = BG_SHADE if idx % 2 != 0 else ""
+        print(f"{row_bg}{district:<20}", end="")
+        for party in party_caps.keys():
+            val = allocations[party]
+            
+            if mode == "votes":
+                print(f"{val:>10,}" if val > 0 else f"{'-':>10}", end="")
+            elif mode == "diff":
+                val_str = f"+{val}" if val > 0 else (f"{val}" if val < 0 else "-")
+                print(f"{val_str:>10}", end="")
+            else:
+                mark = marks.get(district, {}).get(party, "") if marks else ""
+                val_str = f"{val}{mark}" if (val > 0 or mark) else "-"
+                
+                if mark == "+":
+                    print(f"\033[42m\033[30m{val_str:>10}\033[0m{row_bg}", end="")
+                elif mark == "-":
+                    print(f"\033[41m\033[97m{val_str:>10}\033[0m{row_bg}", end="")
+                else:
+                    print(f"{val_str:>10}", end="")
+        
+        r_total = custom_row_totals[district] if custom_row_totals is not None else district_caps[district]
+        if weights_r:
+            print(f"{r_total:>10} ({weights_r[district]:.4f})\033[0m")
+        else:
+            print(f"{r_total:>10}\033[0m")
+            
+    print("-" * (20 + 10 * len(party_caps) + (25 if weights_r else 10)))
+    
+    bottom_label = "Total Raw Votes" if mode == "votes" else ("Net Allocation Change" if mode == "diff" else "Mandatos Total")
+    print(f"{bottom_label:<20}", end="")
+    
+    for party in party_caps.keys():
+        val = party_totals[party]
+        if mode == "votes":
+            print(f"{val:>10,}", end="")
+        elif mode == "diff":
+            val_str = f"+{val}" if val > 0 else (f"{val}" if val < 0 else "-")
+            print(f"{val_str:>10}", end="")
+        else:
+            print(f"{val:>10}", end="")
+            
+    print(f"{sum(party_totals.values()):>10,}" if mode == "votes" else f"{sum(party_totals.values()):>10}")
+    
+    if weights_c:
+        print(f"{'(Party Weight)':<20}", end="")
+        for party in party_caps.keys():
+            w_val = weights_c[party]
+            w_str = "inf" if w_val == float('inf') else f"{w_val:.4f}"
+            print(f"({w_str:>8})", end="")
+        print()
+    print()
+
+
+def render_scorecard_table(title_label: str, metric_repository: Dict[str, List[Any]], simulations_count: int, precision_val: int = 2, higher_is_better: bool = False, csv_accumulator: Optional[List[List[Any]]] = None) -> None:
+    if not metric_repository or simulations_count <= 0:
+        return
+
+    win_counts = {name: 0 for name in metric_repository.keys()}
+    for iter_idx in range(simulations_count):
+        if higher_is_better:
+            best_metric_found = max(metric_repository[name][iter_idx] for name in metric_repository.keys())
+        else:
+            best_metric_found = min(metric_repository[name][iter_idx] for name in metric_repository.keys())
+            
+        for name in metric_repository.keys():
+            if metric_repository[name][iter_idx] == best_metric_found:
+                win_counts[name] += 1
+
+    win_header_label = "Wins (Highest)" if higher_is_better else "Wins (Fewest)"
+    
+    print(f"\n{title_label}")
+    print("-" * 135)
+    print(f"{'Electoral Allocation System':<38} | {win_header_label:<14} | {'Average (Mean)':<14} | {'Median (50th)':<13} | {'Minimum':<7} | {'Maximum':<7} | {'Typical Range (5th-95th)':<24}")
+    print("-" * 135)
+    
+    if csv_accumulator is not None:
+        csv_accumulator.append([])
+        csv_accumulator.append([title_label])
+        csv_accumulator.append(["Electoral Allocation System", win_header_label, "Average (Mean)", "Median (50th)", "Minimum", "Maximum", "Typical Range (5th-95th)"])
+
+    for idx, name in enumerate(metric_repository.keys()):
+        row_bg = BG_SHADE if idx % 2 != 0 else ""
+        raw_scores = metric_repository[name]
+        sorted_scores = sorted(raw_scores)
+        
+        win_pct = (win_counts[name] / simulations_count) * 100 if simulations_count > 0 else 0.0
+        mean_val = sum(raw_scores) / len(raw_scores) if raw_scores else 0.0
+        median_val = sorted_scores[int(len(sorted_scores) * 0.5)] if sorted_scores else 0.0
+        min_val = sorted_scores[0] if sorted_scores else 0.0
+        max_val = sorted_scores[-1] if sorted_scores else 0.0
+        p05 = sorted_scores[int(len(sorted_scores) * 0.05)] if sorted_scores else 0.0
+        p95 = sorted_scores[min(len(sorted_scores) - 1, int(len(sorted_scores) * 0.95))] if sorted_scores else 0.0
+        
+        if precision_val == 2:
+            range_str = f"{p05:.2f} - {p95:.2f}"
+            print(f"{row_bg}{name:<38} | {win_pct:>12.1f}% | {mean_val:>14.2f} | {median_val:>13.2f} | {min_val:>7.2f} | {max_val:>7.2f} | {range_str:>24}\033[0m")
+            if csv_accumulator is not None:
+                csv_accumulator.append([name, f"{win_pct:.1f}%", f"{mean_val:.2f}", f"{median_val:.2f}", f"{min_val:.2f}", f"{max_val:.2f}", range_str])
+        else:
+            range_str = f"{int(p05)} - {int(p95)}"
+            print(f"{row_bg}{name:<38} | {win_pct:>12.1f}% | {mean_val:>14.2f} | {int(median_val):>13} | {int(min_val):>7} | {int(max_val):>7} | {range_str:>24}\033[0m")
+            if csv_accumulator is not None:
+                csv_accumulator.append([name, f"{win_pct:.1f}%", f"{mean_val:.2f}", str(int(median_val)), str(int(min_val)), str(int(max_val)), range_str])
+            
+    print("-" * 135 + "\n")
+</file>
+
+</files>

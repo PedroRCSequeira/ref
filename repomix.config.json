@@ -1,0 +1,16 @@
+{
+  "ignore": {
+    "customPatterns": [
+      "**/*.csv",
+      "**/*.json",
+      "**/*.log",
+      "z_data_storage/**",
+      "**/.env*",
+      "**/venv/**",
+      "**/.venv/**",
+      "**/.vscode/**",
+      "**/*.pem",
+      "**/*.key"
+    ]
+  }
+}
