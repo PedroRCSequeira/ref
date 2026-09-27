@@ -1,6 +1,7 @@
 import csv
 import math
 import os
+import numpy as np
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import (
@@ -359,12 +360,16 @@ def plot_monte_carlo_trends(
                     continue
                 sorted_vals = sorted(vals)
                 mean_v = sum(sorted_vals) / len(sorted_vals)
-                p05 = sorted_vals[int(len(sorted_vals) * 0.05)]
-                p95 = sorted_vals[min(len(sorted_vals) - 1, int(len(sorted_vals) * 0.95))]
+                
+                p05 = float(np.percentile(sorted_vals, 5, method="linear"))
+                p95 = float(np.percentile(sorted_vals, 95, method="linear"))
 
                 means.append(mean_v)
-                err_lowers.append(mean_v - p05)
-                err_uppers.append(p95 - mean_v)
+                # Clamp to zero: Matplotlib treats yerr as a *length*, not a signed value.
+                # For skewed / discrete metrics (e.g. coverage), the 5th percentile can
+                # legitimately sit above the mean, which would produce a negative length.
+                err_lowers.append(max(0.0, mean_v - p05))
+                err_uppers.append(max(0.0, p95 - mean_v))
                 x_positions.append(idx + x_offset)
 
             if means:

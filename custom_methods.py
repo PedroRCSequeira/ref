@@ -11,7 +11,7 @@ DEFAULT_SMALLEST_FIRST_TIER1_CAP = 5     # Tier 1: Parties with <= 5 national ma
 DEFAULT_SMALLEST_FIRST_TIER2_CAP = 20    # Tier 2: Parties with 6 to 20 national mandates
 
 # 2-Speed Danish Pool Defaults
-DEFAULT_TWO_SPEED_ROUND1_DISTRICT_CAP = 4 # Max seats per party per district in Round 1
+DEFAULT_TWO_SPEED_ROUND1_DISTRICT_CAP = 2 # Max seats per party per district in Round 1
 
 # Non-Formula Progressive Defaults [1, 3, 4, 4, 7, 10]
 DEFAULT_PROGRESSIVE_PHASE1_START = 1

@@ -152,6 +152,30 @@ def run_tuning(
         actual_max_trials = max_trials
         engine_mode = f"SMART BAYESIAN SAMPLING ({total_possible_combos:,} total space)"
 
+    # --------------------------------------------------------------------------
+    # PRELOAD DATASETS ONCE (avoid re-parsing CSVs on every Optuna trial)
+    # --------------------------------------------------------------------------
+    # The parsed archives and district-letter maps are identical for every trial,
+    # so we read them a single time here and share them (read-only) across trials.
+    data_files = sorted(glob.glob("data_*.csv"))
+    if not data_files:
+        raise FileNotFoundError("No 'data_*.csv' files found in workspace.")
+
+    needs_staircase_maps = any(g in enabled_goal_keys for g in ["dips", "pairs", "magnitude"])
+
+    preloaded_datasets: List[Tuple[str, Dict[str, Any], Dict[str, str]]] = []
+    for file_path in data_files:
+        country_name = os.path.basename(file_path).replace("data_", "").replace(".csv", "").strip().title()
+        archive = parse_stacked_country_file(file_path)
+
+        if needs_staircase_maps:
+            all_districts = list(next(iter(archive.values()))["district_caps"].keys())
+            d2l_map, _ = generate_district_letter_mapping(all_districts)
+        else:
+            d2l_map = {}
+
+        preloaded_datasets.append((country_name, archive, d2l_map))
+
     def objective(trial):
         suggested_kwargs = {}
         for param_name, (param_type, min_v, max_v) in tuning_parameters.items():
@@ -178,24 +202,11 @@ def run_tuning(
             trial.study.stop()
         # ----------------------------------------------------------------------
 
-        data_files = sorted(glob.glob("data_*.csv"))
-        if not data_files:
-            raise FileNotFoundError("No 'data_*.csv' files found in workspace.")
-
         # Structure to track detailed dataset/year-by-year results
         # dataset_results[(country, year)][goal] = float
         dataset_results: Dict[Tuple[str, int], Dict[str, float]] = {}
 
-        for file_path in data_files:
-            country_name = os.path.basename(file_path).replace("data_", "").replace(".csv", "").strip().title()
-            archive = parse_stacked_country_file(file_path)
-
-            if any(g in enabled_goal_keys for g in ["dips", "pairs", "magnitude"]):
-                all_districts = list(next(iter(archive.values()))["district_caps"].keys())
-                d2l_map, _ = generate_district_letter_mapping(all_districts)
-            else:
-                d2l_map = {}
-
+        for country_name, archive, d2l_map in preloaded_datasets:
             for year, dataset in archive.items():
                 votes = dataset["votes"]
                 district_caps = dataset["district_caps"]
@@ -301,6 +312,7 @@ def run_tuning(
     print(f" • Thermal Cooling Pause:   {cooling_pause_per_trial}s")
     print(f" • System Sleep Prevention: {'ENABLED (wakepy)' if HAS_WAKEPY else 'DISABLED'}")
     print(f" • Pareto-Only Output:      {'ENABLED' if pareto_only else 'DISABLED'}")
+    print(f" • Preloaded Datasets:      {len(preloaded_datasets)} file(s) cached for all trials")
     print("=" * 80 + "\n")
 
     timeout_sec = (max_time_minutes * 60) if max_time_minutes else None
