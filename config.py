@@ -9,7 +9,7 @@ ENABLE_DANISH_DP = True       # Global Toggle: True to enable Danish DP calculat
 ENABLE_STAIRCASE_PLOTS = 0     # 1 to generate and save staircase charts to disk; 0 to disable
 SHOW_PLOT_POPUPS = 0           # 0 = Save images silently to folder; 1 = Open popups sequentially
 
-SIMULATIONS = 500              # Total valid variant runs executed per historical election cycle
+SIMULATIONS = 250              # Total valid variant runs executed per historical election cycle
 NATIONAL_VARIATION = 8.0       # Maximum uniform national party swing boundary (± percentage points)
 LOCAL_VARIATION = 2.0          # Maximum independent regional district variance shift factor (± percentage)
 RANDOM_SEED = 12345            # Base master algorithm initializer seed value

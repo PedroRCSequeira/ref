@@ -11,7 +11,14 @@ DEFAULT_SMALLEST_FIRST_TIER1_CAP = 5     # Tier 1: Parties with <= 5 national ma
 DEFAULT_SMALLEST_FIRST_TIER2_CAP = 20    # Tier 2: Parties with 6 to 20 national mandates
 
 # 2-Speed Danish Pool Defaults
-DEFAULT_TWO_SPEED_ROUND1_DISTRICT_CAP = 2 # Max seats per party per district in Round 1
+DEFAULT_TWO_SPEED_ROUND1_DISTRICT_CAP = 4  # Max seats per party per district in Round 1
+
+# 2-Speed-Adjusted Pool Defaults (tiered Round-1 caps based on district size)
+DEFAULT_TWO_SPEED_ADJ_SMALL_THRESHOLD = 6   # Districts with size  < this  -> "small"
+DEFAULT_TWO_SPEED_ADJ_LARGE_THRESHOLD = 20  # Districts with size  < this  -> "medium"; else "large"
+DEFAULT_TWO_SPEED_ADJ_SMALL_CAP = 2         # Round-1 cap for small districts
+DEFAULT_TWO_SPEED_ADJ_MEDIUM_CAP = 3        # Round-1 cap for medium districts
+DEFAULT_TWO_SPEED_ADJ_LARGE_CAP = 4         # Round-1 cap for large districts
 
 # Non-Formula Progressive Defaults [1, 3, 4, 4, 7, 10]
 DEFAULT_PROGRESSIVE_PHASE1_START = 1
@@ -377,6 +384,146 @@ def allocate_two_speed_pool_method(
     return final_allocations, party_won, history_log
 
 
+def allocate_two_speed_adjusted_pool_method(
+    votes_map: Dict[str, Dict[str, int]], 
+    party_caps: Dict[str, int], 
+    district_caps: Dict[str, int], 
+    divisor_func: Optional[Callable[[int], int]] = None,
+    small_district_threshold: int = DEFAULT_TWO_SPEED_ADJ_SMALL_THRESHOLD,
+    large_district_threshold: int = DEFAULT_TWO_SPEED_ADJ_LARGE_THRESHOLD,
+    small_district_cap: int = DEFAULT_TWO_SPEED_ADJ_SMALL_CAP,
+    medium_district_cap: int = DEFAULT_TWO_SPEED_ADJ_MEDIUM_CAP,
+    large_district_cap: int = DEFAULT_TWO_SPEED_ADJ_LARGE_CAP,
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, int], List[Dict[str, Any]]]:
+    """
+    Like the standard 2-Speed method, but Round 1's per-party-per-district cap
+    is dynamically chosen from three tiers based on the district's total size:
+
+        size <  small_district_threshold                 -> small_district_cap
+        small_district_threshold <= size < large_threshold -> medium_district_cap
+        size >= large_district_threshold                 -> large_district_cap
+
+    All five parameters are fully tunable via the tuning engine.
+    """
+    if divisor_func is None:
+        divisor_func = lambda n: 1 + 3 * (n - 1)  # Danish default: 1, 4, 7, 10...
+
+    all_quotients_pool = []
+    for district, parties in votes_map.items():
+        max_possible_seats = district_caps[district]
+        for party, vote_count in parties.items():
+            if party_caps.get(party, 0) == 0:
+                continue
+            for seat_idx in range(1, max_possible_seats + 1):
+                divisor = divisor_func(seat_idx)
+                if divisor <= 0: divisor = 1
+                all_quotients_pool.append({
+                    "District": district, "Party": party,
+                    "Quotient": round(vote_count / divisor, 4),
+                    "Divisor Used": divisor, "Seat Attempt #": seat_idx,
+                    "_used": False
+                })
+
+    all_quotients_pool.sort(key=lambda x: (x["District"], x["Party"]))
+    all_quotients_pool.sort(key=lambda x: x["Quotient"], reverse=True)
+
+    final_allocations = {d: {p: 0 for p in party_caps.keys()} for d in district_caps.keys()}
+    party_won = {p: 0 for p in party_caps.keys()}
+    district_won = {d: 0 for d in district_caps.keys()}
+
+    total_allocated = 0
+    max_needed = sum(district_caps.values())
+    history_log = []
+    step_idx = 0
+
+    # Determine dynamic Round 1 district cap based on district size
+    round1_caps: Dict[str, int] = {}
+    for d, size in district_caps.items():
+        if size < small_district_threshold:
+            round1_caps[d] = small_district_cap
+        elif size < large_district_threshold:
+            round1_caps[d] = medium_district_cap
+        else:
+            round1_caps[d] = large_district_cap
+
+    # PHASE 1: ROUND 1 ALLOCATION (Tiered Caps)
+    for item in all_quotients_pool:
+        if total_allocated >= max_needed:
+            break
+
+        step_idx += 1
+        d, p = item["District"], item["Party"]
+        district_full = district_won[d] >= district_caps[d]
+        party_full = party_won[p] >= party_caps[p]
+        round1_cap_reached = final_allocations[d][p] >= round1_caps[d]
+
+        if district_full and party_full:
+            status = "No - Both Caps Reached"
+        elif district_full:
+            status = "No - District Cap Reached"
+        elif party_full:
+            status = "No - National Party Cap Reached"
+        elif round1_cap_reached:
+            status = "No - Round 1 District Cap Reached"
+        else:
+            status = "Yes"
+            item["_used"] = True
+            final_allocations[d][p] += 1
+            party_won[p] += 1
+            district_won[d] += 1
+            total_allocated += 1
+
+        history_log.append({
+            "Step": step_idx,
+            "District": d, 
+            "Party": p, 
+            "Quotient": item["Quotient"],
+            "Divisor": item["Divisor Used"], 
+            "Seat Attempt": item["Seat Attempt #"],
+            "Allocated": status,
+            "Running Total": total_allocated
+        })
+
+    # PHASE 2: ROUND 2 ALLOCATION (Uncapped)
+    if total_allocated < max_needed:
+        remaining_pool = [q for q in all_quotients_pool if not q["_used"]]
+        remaining_pool.sort(key=lambda x: (x["District"], x["Party"]))
+        remaining_pool.sort(key=lambda x: x["Quotient"], reverse=True)
+
+        for item in remaining_pool:
+            if total_allocated >= max_needed:
+                break
+
+            step_idx += 1
+            item["_used"] = True
+            d, p = item["District"], item["Party"]
+            district_full = district_won[d] >= district_caps[d]
+            party_full = party_won[p] >= party_caps[p]
+
+            if district_full and party_full: status = "No - Both Caps Reached"
+            elif district_full: status = "No - District Cap Reached"
+            elif party_full: status = "No - National Party Cap Reached"
+            else:
+                status = "Yes"
+                final_allocations[d][p] += 1
+                party_won[p] += 1
+                district_won[d] += 1
+                total_allocated += 1
+
+            history_log.append({
+                "Step": step_idx,
+                "District": d, 
+                "Party": p, 
+                "Quotient": item["Quotient"],
+                "Divisor": item["Divisor Used"], 
+                "Seat Attempt": item["Seat Attempt #"],
+                "Allocated": status,
+                "Running Total": total_allocated
+            })
+
+    return final_allocations, party_won, history_log
+
+
 # ==============================================================================
 # 4. MASTER CUSTOM METHODS REGISTRY (SINGLE SOURCE OF TRUTH)
 # ==============================================================================
@@ -407,6 +554,23 @@ CUSTOM_METHODS_REGISTRY: List[Dict[str, Any]] = [
         "kwargs": {
             "round1_district_cap": DEFAULT_TWO_SPEED_ROUND1_DISTRICT_CAP, 
             "divisor_func": lambda n: 1 + 3 * (n - 1)
+        }
+    },
+    {
+        "name": "2-speed-adjusted",
+        "enabled": True,
+        "run_historical": True,
+        "run_monte_carlo": True,
+        "show_console": True,
+        "show_excel": True,
+        "func": allocate_two_speed_adjusted_pool_method,
+        "kwargs": {
+            "divisor_func": lambda n: 1 + 3 * (n - 1),
+            "small_district_threshold": DEFAULT_TWO_SPEED_ADJ_SMALL_THRESHOLD,
+            "large_district_threshold": DEFAULT_TWO_SPEED_ADJ_LARGE_THRESHOLD,
+            "small_district_cap":       DEFAULT_TWO_SPEED_ADJ_SMALL_CAP,
+            "medium_district_cap":      DEFAULT_TWO_SPEED_ADJ_MEDIUM_CAP,
+            "large_district_cap":       DEFAULT_TWO_SPEED_ADJ_LARGE_CAP,
         }
     },
     {
