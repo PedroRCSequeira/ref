@@ -101,7 +101,7 @@ def plot_staircase_sequence(
     fig, ax = plt.subplots(figsize=(12, 6))
 
     ax.plot(x_vals, running_peak, color='gray', linestyle='--', alpha=0.75, linewidth=1.5, label='Running Peak (M3 Reference)')
-    ax.fill_between(x_vals, y_seats, running_peak, color='red', alpha=0.18, label=f'Displacement Depth Gap (M3 = {mag})')
+    ax.fill_between(x_vals, running_peak, y_seats, color='red', alpha=0.18, label=f'Displacement Depth Gap (M3 = {mag})')
     ax.step(x_vals, y_seats, where='mid', color='#1f77b4', linewidth=2.0, label='Allocated Mandates')
 
     dip_x, dip_y = [], []
@@ -182,7 +182,7 @@ def plot_combined_year_comparison(
             running_peak.append(curr_peak)
 
         ax.plot(x_vals, running_peak, color='gray', linestyle='--', alpha=0.7, linewidth=1.2)
-        ax.fill_between(x_vals, y_seats, running_peak, color='red', alpha=0.15)
+        ax.fill_between(x_vals, running_peak, y_seats, color='red', alpha=0.15)
         ax.step(x_vals, y_seats, where='mid', color='#1f77b4', linewidth=1.8)
 
         dip_x, dip_y = [], []
@@ -268,7 +268,7 @@ def plot_method_all_years_comparison(
             running_peak.append(curr_peak)
 
         ax.plot(x_vals, running_peak, color='gray', linestyle='--', alpha=0.7, linewidth=1.2)
-        ax.fill_between(x_vals, y_seats, running_peak, color='red', alpha=0.15)
+        ax.fill_between(x_vals, running_peak, y_seats, color='red', alpha=0.15)
         ax.step(x_vals, y_seats, where='mid', color='#1f77b4', linewidth=1.8)
 
         dip_x, dip_y = [], []
@@ -614,6 +614,36 @@ def print_top_displacement_examples(incidents: List[Dict[str, Any]], title: str,
             )
 
 
+def _format_seat_cell(
+    val: int, 
+    district: str, 
+    party: str, 
+    mark: str, 
+    phase_tracker: Optional[Dict[str, Any]]
+) -> str:
+    """
+    Builds the display string for a single (district, party) seat cell.
+
+    Formats:
+      - No phase tracking:               "4" / "4+" / "4-" / "-"
+      - 2-Speed (only 'phase1' key):     "4(3)"  -> total(seats held at end of Phase 1)
+      - 2-Speed-Adjusted ('phase2' key): "4/1/3" -> total/gained-in-Phase-2/held-at-end-of-Phase-1
+    """
+    # Empty cell (no seats, no inversion marker)
+    if val == 0 and not mark:
+        return "-"
+
+    if phase_tracker is None:
+        return f"{val}{mark}"
+
+    phase1_held = phase_tracker.get("phase1", {}).get(district, {}).get(party, 0)
+
+    # Both 2-Speed and 2-speed-adjusted: total(seats-held-at-end-of-Round-1)
+    core = f"{val}({phase1_held})"
+
+    return f"{core}{mark}" if mark else core
+
+
 def print_structured_table(
     title: str, 
     matrix: Dict[str, Dict[str, int]], 
@@ -626,7 +656,8 @@ def print_structured_table(
     weights_c: Optional[Dict[str, float]] = None, 
     custom_row_totals: Optional[Dict[str, int]] = None,
     is_valid: bool = True,
-    errors: Optional[List[str]] = None
+    errors: Optional[List[str]] = None,
+    phase_tracker: Optional[Dict[str, Any]] = None
 ) -> None:
     if ENABLE_MONTE_CARLO:
         return
@@ -662,7 +693,7 @@ def print_structured_table(
                 print(f"{val_str:>10}", end="")
             else:
                 mark = marks.get(district, {}).get(party, "") if marks else ""
-                val_str = f"{val}{mark}" if (val > 0 or mark) else "-"
+                val_str = _format_seat_cell(val, district, party, mark, phase_tracker)
                 
                 if mark == "+":
                     print(f"\033[42m\033[30m{val_str:>10}\033[0m{row_bg}", end="")

@@ -172,7 +172,13 @@ def run_historical_election(
         if not ENABLE_MONTE_CARLO and not method_cfg.get("run_historical", True): 
             continue
 
-        e_res, _, e_history = method_cfg["func"](votes, party_caps, district_caps, **method_cfg.get("kwargs", {}))
+        # --- Phase tracking wiring (opt-in via registry flag) ---
+        phase_tracker = {} if method_cfg.get("supports_phase_tracking") else None
+        call_kwargs = dict(method_cfg.get("kwargs", {}))
+        if phase_tracker is not None:
+            call_kwargs["phase_tracker"] = phase_tracker
+
+        e_res, _, e_history = method_cfg["func"](votes, party_caps, district_caps, **call_kwargs)
         
         e_milestones = compute_quotient_milestones(e_history, total_mandates_sum)
         if method_cfg.get("show_console", True):
@@ -208,7 +214,12 @@ def run_historical_election(
         trackers["global_coverage_tracker"][m_name_str] += e_cov
         
         year_methods_grid_data.append({"method_name": m_name_str, "entries": e_entries, "dips": e_dips, "pairs": e_pairs, "mag": e_mag})
-        extra_computed_methods.append({"config": method_cfg, "results": e_res, "marks": e_marks})
+        extra_computed_methods.append({
+            "config": method_cfg, 
+            "results": e_res, 
+            "marks": e_marks,
+            "phase_tracker": phase_tracker
+        })
 
     year_methods_grid_data.sort(key=lambda x: get_method_order_index(x["method_name"]))
 
@@ -229,7 +240,12 @@ def run_historical_election(
         for extra in extra_computed_methods:
             if extra["config"].get("show_console", True):
                 extra_totals = {p: sum(extra["results"][d][p] for d in votes.keys()) for p in parties_list}
-                print_structured_table(f"({year}) METHOD: {extra['config']['name']}", extra["results"], party_caps, extra_totals, district_caps, mode="seats", marks=extra["marks"])
+                print_structured_table(
+                    f"({year}) METHOD: {extra['config']['name']}",
+                    extra["results"], party_caps, extra_totals, district_caps,
+                    mode="seats", marks=extra["marks"],
+                    phase_tracker=extra.get("phase_tracker")
+                )
 
         print_quotient_efficiency_table(f"QUOTIENT EFFICIENCY RADAR: {country_name.upper()} ({year})", year_method_milestones, total_mandates_sum)
 

@@ -93,6 +93,18 @@ def get_non_formula_progressive_divisor(
         return p2_last + offset * phase3_step
 
 
+def _snapshot_allocations(
+    final_allocations: Dict[str, Dict[str, int]], 
+    party_caps: Dict[str, int], 
+    district_caps: Dict[str, int]
+) -> Dict[str, Dict[str, int]]:
+    """Returns a deep-copy snapshot of the current (district, party) -> seat matrix."""
+    return {
+        d: {p: final_allocations[d][p] for p in party_caps.keys()}
+        for d in district_caps.keys()
+    }
+
+
 # ==============================================================================
 # 3. ALLOCATION ENGINES
 # ==============================================================================
@@ -273,8 +285,13 @@ def allocate_two_speed_pool_method(
     party_caps: Dict[str, int], 
     district_caps: Dict[str, int], 
     round1_district_cap: int = DEFAULT_TWO_SPEED_ROUND1_DISTRICT_CAP,
-    divisor_func: Optional[Callable[[int], int]] = None
+    divisor_func: Optional[Callable[[int], int]] = None,
+    phase_tracker: Optional[Dict[str, Any]] = None
 ) -> Tuple[Dict[str, Dict[str, int]], Dict[str, int], List[Dict[str, Any]]]:
+    """
+    Standard 2-Speed method. Optionally populates `phase_tracker["phase1"]`
+    with a per-(district, party) snapshot taken at the end of Round 1.
+    """
     if divisor_func is None:
         divisor_func = lambda n: 1 + 3 * (n - 1)  # Danish default: 1, 4, 7, 10...
 
@@ -344,6 +361,10 @@ def allocate_two_speed_pool_method(
             "Running Total": total_allocated
         })
 
+    # Snapshot end of Phase 1
+    if phase_tracker is not None:
+        phase_tracker["phase1"] = _snapshot_allocations(final_allocations, party_caps, district_caps)
+
     # PHASE 2: ROUND 2 ALLOCATION
     if total_allocated < max_needed:
         remaining_pool = [q for q in all_quotients_pool if not q["_used"]]
@@ -394,6 +415,7 @@ def allocate_two_speed_adjusted_pool_method(
     small_district_cap: int = DEFAULT_TWO_SPEED_ADJ_SMALL_CAP,
     medium_district_cap: int = DEFAULT_TWO_SPEED_ADJ_MEDIUM_CAP,
     large_district_cap: int = DEFAULT_TWO_SPEED_ADJ_LARGE_CAP,
+    phase_tracker: Optional[Dict[str, Any]] = None
 ) -> Tuple[Dict[str, Dict[str, int]], Dict[str, int], List[Dict[str, Any]]]:
     """
     Like the standard 2-Speed method, but Round 1's per-party-per-district cap
@@ -403,7 +425,8 @@ def allocate_two_speed_adjusted_pool_method(
         small_district_threshold <= size < large_threshold -> medium_district_cap
         size >= large_district_threshold                 -> large_district_cap
 
-    All five parameters are fully tunable via the tuning engine.
+    Optionally populates `phase_tracker["phase1"]` with a per-(district, party)
+    snapshot taken at the end of Round 1.
     """
     if divisor_func is None:
         divisor_func = lambda n: 1 + 3 * (n - 1)  # Danish default: 1, 4, 7, 10...
@@ -484,6 +507,10 @@ def allocate_two_speed_adjusted_pool_method(
             "Running Total": total_allocated
         })
 
+    # Snapshot end of Phase 1
+    if phase_tracker is not None:
+        phase_tracker["phase1"] = _snapshot_allocations(final_allocations, party_caps, district_caps)
+
     # PHASE 2: ROUND 2 ALLOCATION (Uncapped)
     if total_allocated < max_needed:
         remaining_pool = [q for q in all_quotients_pool if not q["_used"]]
@@ -550,6 +577,7 @@ CUSTOM_METHODS_REGISTRY: List[Dict[str, Any]] = [
         "run_monte_carlo": True,
         "show_console": True,
         "show_excel": True,
+        "supports_phase_tracking": True,
         "func": allocate_two_speed_pool_method,
         "kwargs": {
             "round1_district_cap": DEFAULT_TWO_SPEED_ROUND1_DISTRICT_CAP, 
@@ -563,6 +591,7 @@ CUSTOM_METHODS_REGISTRY: List[Dict[str, Any]] = [
         "run_monte_carlo": True,
         "show_console": True,
         "show_excel": True,
+        "supports_phase_tracking": True,
         "func": allocate_two_speed_adjusted_pool_method,
         "kwargs": {
             "divisor_func": lambda n: 1 + 3 * (n - 1),

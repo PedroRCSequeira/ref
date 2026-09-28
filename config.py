@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 # ==============================================================================
 # MASTER GLOBAL RUN CONFIGURATION LAYER
 # ==============================================================================
-ENABLE_MONTE_CARLO = True     # True for Monte Carlo simulations, False for raw historical reports
+ENABLE_MONTE_CARLO = False     # True for Monte Carlo simulations, False for raw historical reports
 ENABLE_DANISH_DP = True       # Global Toggle: True to enable Danish DP calculations & tables
 ENABLE_STAIRCASE_PLOTS = 0     # 1 to generate and save staircase charts to disk; 0 to disable
 SHOW_PLOT_POPUPS = 0           # 0 = Save images silently to folder; 1 = Open popups sequentially
