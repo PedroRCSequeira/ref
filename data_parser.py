@@ -2,6 +2,8 @@ import csv
 import re
 from typing import Any, Dict, List, Tuple
 
+REGISTERED_VOTER_HEADERS = {"inscritos", "eleitores"}
+
 def parse_int_safe(val: Any) -> int:
     """Safely converts string/number representations into integers."""
     if val is None:
@@ -87,6 +89,7 @@ def parse_stacked_country_file(file_path: str) -> Dict[str, Dict[str, Any]]:
             district_col_idx = 0
             mandatos_idx = None
             totais_idx = None
+            registered_voter_indices = set()
             
             mandate_keywords = ["mandatos", "mandates", "seats", "mandatos_totais", "mandate", "sitze", "zuteilung", "anzahl_mandate", "mandat", "seat", "sitze_total"]
             total_keywords = ["totais", "total", "total_votes", "totais_votos", "sum", "stimmen_total", "votos_totais"]
@@ -98,6 +101,8 @@ def parse_stacked_country_file(file_path: str) -> Dict[str, Dict[str, Any]]:
                     mandatos_idx = i
                 elif h_clean in total_keywords:
                     totais_idx = i
+                elif h_clean in REGISTERED_VOTER_HEADERS:
+                    registered_voter_indices.add(i)
 
             if mandatos_idx is None:
                 raise ValueError(f"❌ CRITICAL DATA ERROR: Dataset file '{filename}' (Year {year_str}) is missing a seats column.")
@@ -105,7 +110,7 @@ def parse_stacked_country_file(file_path: str) -> Dict[str, Dict[str, Any]]:
             parties_list = []
             party_indices = []
             for i, h in enumerate(header_parts):
-                if i in (district_col_idx, mandatos_idx, totais_idx):
+                if i in (district_col_idx, mandatos_idx, totais_idx) or i in registered_voter_indices:
                     continue
                 parties_list.append(h)
                 party_indices.append(i)

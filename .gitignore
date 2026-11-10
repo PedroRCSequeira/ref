@@ -1,0 +1,17 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Generated graphs and exports
+/*_trends/
+/graph_inversions_*/
+/outputs/
+
+# Generated reports (source datasets remain tracked)
+/master_electoral_report.csv
+/*_quotient_analysis.csv
+/*_quotient_analysis.xlsx
+/dist_mandatos_excel.csv
+/small_districts_loss_analysis.csv

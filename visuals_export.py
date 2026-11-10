@@ -626,8 +626,11 @@ def _format_seat_cell(
 
     Formats:
       - No phase tracking:               "4" / "4+" / "4-" / "-"
-      - 2-Speed (only 'phase1' key):     "4(3)"  -> total(seats held at end of Phase 1)
-      - 2-Speed-Adjusted ('phase2' key): "4/1/3" -> total/gained-in-Phase-2/held-at-end-of-Phase-1
+      - 2-Speed (only 'phase1' key):     "4(3)" -> total(seats held at end of Phase 1).
+                                                   The "(Y)" suffix is shown ONLY when
+                                                   the Phase-1 seat count differs from the
+                                                   final total; when they are equal, just "4"
+                                                   is printed, so a bare number means no change.
     """
     # Empty cell (no seats, no inversion marker)
     if val == 0 and not mark:
@@ -638,8 +641,13 @@ def _format_seat_cell(
 
     phase1_held = phase_tracker.get("phase1", {}).get(district, {}).get(party, 0)
 
-    # Both 2-Speed and 2-speed-adjusted: total(seats-held-at-end-of-Round-1)
-    core = f"{val}({phase1_held})"
+    # 2-Speed: total(seats-held-at-end-of-Round-1).
+    # Only show the parenthetical when it differs from the final total,
+    # so a bare "X" unambiguously means X == Y (no Phase-1-to-final change).
+    if phase1_held == val:
+        core = f"{val}"
+    else:
+        core = f"{val}({phase1_held})"
 
     return f"{core}{mark}" if mark else core
 

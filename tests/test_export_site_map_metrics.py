@@ -2,6 +2,7 @@
 
 import contextlib
 import copy
+import csv
 import io
 import json
 import tempfile
@@ -142,11 +143,12 @@ class MapMetricsTests(unittest.TestCase):
 
     def test_duplicate_year_district_and_truncated_row_fail(self):
         text = self.source_text()
-        row = "Açores,37720,37289,7323,2321,816,300,593,511,180,331,5,88817"
+        row = next(line for line in text.splitlines() if line.startswith("Açores,"))
+        width = len(next(csv.reader([row])))
         alterations = (
             (text.replace("2019,", "2015,", 1), "duplicate election year"),
             (text.replace(row, row + "\n" + row, 1), "duplicate district"),
-            (text.replace(row, row.rsplit(",", 1)[0], 1), "expected 13 columns"),
+            (text.replace(row, row.rsplit(",", 1)[0], 1), f"expected {width} columns"),
         )
         for modified, error in alterations:
             with self.subTest(error=error), tempfile.TemporaryDirectory() as directory:

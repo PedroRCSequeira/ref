@@ -6,6 +6,7 @@
         "1_core.md": "audit.py, runner.py, monte_carlo.py, tune_parameters*.py",
         "7_visuals.md": "reporting.py, visuals_export.py",
         "5_tune.md": "tun*.py",
-        "2_engines.md": "baseline_engines.py, custom_methods.py, electoral_metrics.py"
+        "2_engines.md": "baseline_engines.py, custom_methods.py, electoral_metrics.py",
+        "district.md": "check_voters_mandates.py, dist_mandatos.py, dist_mandatos_excel.csv, small_districts_loss_analysis.py, small_districts_loss_analysis.csv"
     }
 }

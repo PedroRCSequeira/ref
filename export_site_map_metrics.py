@@ -17,7 +17,7 @@ sys.dont_write_bytecode = True
 
 from baseline_engines import dhondt_apportion, get_national_party_caps
 from custom_methods import CUSTOM_METHODS_REGISTRY, allocate_two_speed_pool_method
-from data_parser import parse_stacked_country_file
+from data_parser import REGISTERED_VOTER_HEADERS, parse_stacked_country_file
 
 
 ROOT = Path(__file__).resolve().parent
@@ -126,7 +126,10 @@ def validate_source_rows(source_path: Path) -> dict[str, dict[str, Any]]:
                     raise ValueError(f"{context}: expected one seats column and one valid-vote totals column.")
                 seat_idx = seats[0]
                 total_idx = totals[0] if totals else None
-                party_indices = [i for i in range(1, len(header)) if i not in (seat_idx, total_idx)]
+                party_indices = [
+                    i for i in range(1, len(header))
+                    if i not in (seat_idx, total_idx) and normalized[i] not in REGISTERED_VOTER_HEADERS
+                ]
                 parties = [header[i] for i in party_indices]
                 if not header[0] or not parties or any(not p for p in parties) or len(set(header)) != len(header):
                     raise ValueError(f"{context}: empty or duplicate column/party names.")
@@ -136,6 +139,8 @@ def validate_source_rows(source_path: Path) -> dict[str, dict[str, Any]]:
                 raise ValueError(f"{context}: expected {len(header)} columns and a district/summary name.")
             special = row[0].lower() in OVERRIDE_ROWS | SUMMARY_ROWS
             for index in range(1, len(header)):
+                if special and normalized[index] in REGISTERED_VOTER_HEADERS and not row[index]:
+                    continue
                 if special and index in (seat_idx, total_idx) and not row[index]:
                     continue
                 number = row[index].replace(" ", "").replace("\xa0", "")
