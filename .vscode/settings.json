@@ -7,6 +7,6 @@
         "7_visuals.md": "reporting.py, visuals_export.py",
         "5_tune.md": "tun*.py",
         "2_engines.md": "baseline_engines.py, custom_methods.py, electoral_metrics.py",
-        "district.md": "check_voters_mandates.py, dist_mandatos.py, dist_mandatos_excel.csv, small_districts_loss_analysis.py, small_districts_loss_analysis.csv"
+        "9_district.md": "dist_mandatos.py, dist_mandatos_excel.csv, small_districts_loss_analysis.py, small_districts_loss_analysis.csv, TREND_Small_District_Seat_Loss_Margins.png, TREND_Small_District_Seat_Loss_Margins_Time_Spaced.png, analise_circ_compensa.py, analise_circ_compensa.csv, TREND_Compensatory_Circle_Size.png"
     }
 }

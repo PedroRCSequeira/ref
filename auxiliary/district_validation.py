@@ -1,24 +1,19 @@
-"""Check each election's district Mandatos against 226-seat voter-based d'Hondt.
+"""Shared electorate loading and mandatory district-mandate validation.
 
-Run: python check_voters_mandates.py [path/to/data_Portugal.csv]
-Accepts Inscritos or Eleitores; never writes to the source or generated reports.
-Rule: https://www.tribunalconstitucional.pt/tc/legislacao030102.html
+Imported by the district analyses; this module has no standalone command.
+Accepts Inscritos or Eleitores and never writes to source data or reports.
 """
 
-import argparse
 import csv
 import re
-import sys
 from fractions import Fraction
 from pathlib import Path
-
-sys.dont_write_bytecode = True
 
 from data_parser import REGISTERED_VOTER_HEADERS
 
 
 TOTAL_MANDATES = 226  # 230 minus the four seats for overseas constituencies.
-DEFAULT_SOURCE = Path(__file__).resolve().with_name("data_Portugal.csv")
+DEFAULT_SOURCE = Path(__file__).resolve().parents[1] / "data_Portugal.csv"
 
 
 def read_elections(source: Path) -> dict:
@@ -91,35 +86,33 @@ def apportion_mandates(voters: dict[str, int]) -> dict[str, int]:
     return mandates
 
 
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", nargs="?", type=Path, default=DEFAULT_SOURCE)
-    args = parser.parse_args(argv)
-    try:
-        elections = read_elections(args.source)
-    except (OSError, ValueError, csv.Error) as exc:
-        print(f"Check failed: {exc}", file=sys.stderr)
-        return 2
+def load_validated_elections(source: Path = DEFAULT_SOURCE) -> dict:
+    """Return elections only after every year's mandates match d'Hondt.
 
-    all_match = True
+    Raise ValueError with all mismatching districts before either caller starts
+    its analysis or writes a report/graph. File and CSV errors also propagate.
+    """
+    source = Path(source)
+    elections = read_elections(source)
+    errors = []
     for year, data in elections.items():
         calculated = apportion_mandates(data["voters"])
         stored = data["mandates"]
         differences = [district for district in stored if stored[district] != calculated[district]]
         if not differences:
-            print(f"{year}: matches (all 20 districts; {TOTAL_MANDATES} mandates).")
             continue
-        all_match = False
-        print(f"{year}: MISMATCH (stored total: {sum(stored.values())}; calculated: {TOTAL_MANDATES}).")
+        errors.append(
+            f"{year}: stored Mandatos do not match electorate-based d'Hondt "
+            f"(stored total: {sum(stored.values())}; calculated: {TOTAL_MANDATES})."
+        )
         for district in differences:
-            print(
+            errors.append(
                 f"  {district}: stored={stored[district]}, calculated={calculated[district]}, "
                 f"voters={data['voters'][district]}"
             )
-    if all_match:
-        print("matches")
-    return 0 if all_match else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    if errors:
+        raise ValueError(
+            f"Mandate validation failed in {source.name}:\n" + "\n".join(errors)
+            + "\nCheck Inscritos/Eleitores and Mandatos before rerunning the analysis."
+        )
+    return elections

@@ -11,12 +11,13 @@ existing parsers and allocation engines when extending an analysis.
 | `baseline_engines.py`, `custom_methods.py` | Seat allocation algorithms and alternative methods. |
 | `audit.py`, `runner.py`, `monte_carlo.py` | Input audits, historical elections, and simulations. |
 | `main.py`, `reporting.py`, `visuals_export.py` | Full pipeline, reports, and plots; run settings live in `config.py`. |
-| `check_voters_mandates.py` | Validate Portugal's district mandates against registered-electorate d'Hondt. |
+| `auxiliary/district_validation.py` | Shared electorate reader and mandatory mandate check, imported by all district analyses. |
 | `dist_mandatos.py` | Compare alternative district distributions and their party totals. |
 | `small_districts_loss_analysis.py` | Calculate small districts' margins before losing one mandate. |
+| `analise_circ_compensa.py` | Find the minimum compensatory circle matching 226-seat national d'Hondt party totals using cumulative excess jumps. |
 | `export_site_map_metrics.py` | Generate the electoral map JSON; see `README_site_map_metrics.md`. |
 
-Read `district.md` for district-analysis commands and report definitions.
+Read `9_district.md` for district-analysis commands and report definitions.
 VS Code groups related files using `.vscode/settings.json`; these are visual
 groups, not directories. Preserve that organization when adding related files.
 
@@ -74,7 +75,11 @@ groups, not directories. Preserve that organization when adding related files.
 - Run relevant tests when changing calculations or behavior. The full suite is
   `python -B -m unittest discover -s tests`; `-B` avoids bytecode generation.
 - After Portugal electorate data or mandate-validation changes, run
-  `python -B check_voters_mandates.py`. Check that allocations sum to their
-  targets and that metadata is excluded from party votes.
+  `python -B -m unittest discover -s tests -p test_district_validation.py`.
+  All district analyses must call the shared `load_validated_elections` helper
+  before analysis or output; abort on any mismatching year/district and preserve
+  previous reports and graphs. Keep internal helpers in `auxiliary/` rather than
+  adding separate runnable checks to the district group. Check that allocations
+  sum to their targets and metadata is excluded from party votes.
 - For Git hygiene changes, use `git check-ignore` and `git ls-files` to verify
   generated files are ignored and untracked, and source inputs remain tracked.

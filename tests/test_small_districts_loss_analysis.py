@@ -1,14 +1,16 @@
 """Check district eligibility, exact loss margins, and election-year spacing."""
 
 import copy
+import contextlib
 import csv
+import io
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import small_districts_loss_analysis as analysis
-from check_voters_mandates import apportion_mandates, read_elections
+from auxiliary.district_validation import apportion_mandates, read_elections
 
 
 class SmallDistrictThresholdTests(unittest.TestCase):
@@ -18,7 +20,8 @@ class SmallDistrictThresholdTests(unittest.TestCase):
         cls.years, cls.districts, cls.rows = analysis.build_analysis(analysis.DEFAULT_SOURCE)
 
     def test_eligibility_uses_full_history_and_source_order(self):
-        self.assertEqual(self.districts, [
+        _, original_selection = analysis.select_districts(self.elections)
+        self.assertEqual(original_selection, [
             "Açores", "Madeira", "Vila Real", "Bragança", "Castelo Branco",
             "Évora", "Beja", "Portalegre",
         ])
@@ -32,6 +35,23 @@ class SmallDistrictThresholdTests(unittest.TestCase):
         del elections["2015"]
         with self.assertRaisesRegex(ValueError, "include 2015"):
             analysis.select_districts(elections)
+
+    def test_extra_filter_keeps_only_2025_margins_strictly_below_five_percent(self):
+        self.assertEqual(self.districts, ["Castelo Branco", "Beja"])
+        self.assertEqual(self.years, ["2015", "2019", "2022", "2024", "2025"])
+        rows = [
+            {"District": "A", "Year": "2015", "Minimum_voter_loss": 1, "Registered_voters": 10000},
+            {"District": "A", "Year": "2025", "Minimum_voter_loss": 500, "Registered_voters": 10000},
+            {"District": "B", "Year": "2025", "Minimum_voter_loss": 499, "Registered_voters": 10000},
+            {"District": "C", "Year": "2025", "Minimum_voter_loss": 501, "Registered_voters": 10000},
+            {"District": "D", "Year": "2025", "Minimum_voter_loss": 1, "Registered_voters": 10000},
+        ]
+        # D passes the margin test but is absent from the original selection.
+        self.assertEqual(analysis.trim_districts(["A", "B", "C"], rows), ["B"])
+        with self.assertRaisesRegex(ValueError, "include 2025"):
+            analysis.trim_districts(["A"], rows[:1])
+        with self.assertRaisesRegex(ValueError, "No eligible districts"):
+            analysis.trim_districts(["A", "C"], rows)
 
     def test_beja_reproduces_verified_historical_minima(self):
         expected = {
@@ -74,13 +94,17 @@ class SmallDistrictThresholdTests(unittest.TestCase):
                 [f"{district} ({self.elections[self.years[-1]]['mandates'][district]})" for district in self.districts],
             )
             beja = next(row for row in table if row[f"District ({self.years[-1]} mandates)"] == "Beja (3)")
-            self.assertEqual(beja["After_losing_one"], "2")
+            self.assertNotIn("After_losing_one", sections[1])
+            headers, values = analysis.summary_table(self.years, self.districts, self.rows)
+            self.assertEqual(headers, ["District (2025 mandates)", *self.years])
+            self.assertTrue(all(len(row) == len(headers) for row in values))
             self.assertAlmostEqual(float(beja["2025_loss_pct"]), 100 * 962 / 118320, places=6)
             self.assertTrue(sections[separator + 1][0].startswith("YEARLY DETAILS:"))
             detail_header = sections[separator + 2]
             self.assertEqual(detail_header, list(analysis.DETAIL_FIELDS))
+            self.assertNotIn("Mandates_after", detail_header)
             detail_rows = [dict(zip(detail_header, row)) for row in sections[separator + 3:]]
-            self.assertEqual(len(detail_rows), 40)
+            self.assertEqual(len(detail_rows), len(self.districts) * len(self.years))
             beja_details = next(row for row in detail_rows if row["District"] == "Beja" and row["Year"] == "2025")
             self.assertEqual(beja_details["Minimum_voter_loss"], "962")
             self.assertEqual(beja_details["Gaining_district"], "Braga")
@@ -99,6 +123,12 @@ class SmallDistrictThresholdTests(unittest.TestCase):
             fig = plt.gcf()
             try:
                 ax = fig.axes[0]
+                self.assertEqual(ax.get_xlabel(), "Election Year")
+                self.assertEqual(ax.get_ylim(), (0, 10))
+                self.assertEqual(
+                    [tick for tick in ax.get_yticks() if 0 <= tick <= 10], list(range(11))
+                )
+                self.assertTrue(all("n - 1" not in text.get_text() for text in fig.texts))
                 self.assertEqual([tick.get_text() for tick in ax.get_xticklabels()], self.years)
                 for line in ax.lines:
                     self.assertEqual(list(line.get_xdata()), [0, 1, 2, 3, 4])
@@ -109,6 +139,55 @@ class SmallDistrictThresholdTests(unittest.TestCase):
                 self.assertEqual(graph.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
             finally:
                 plt.close(fig)
+
+    def test_alternative_graph_spaces_elections_by_exact_elapsed_days(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        with tempfile.TemporaryDirectory() as directory:
+            graph = Path(directory) / "time_graph.png"
+            with patch.object(plt, "close"):
+                analysis.plot_margins(self.years, self.districts, self.rows, graph, time_proportional=True)
+            fig = plt.gcf()
+            try:
+                ax = fig.axes[0]
+                self.assertEqual(ax.get_xlabel(), "Election Date")
+                self.assertEqual([tick.get_text() for tick in ax.get_xticklabels()], [
+                    "04/10\n2015", "06/10\n2019", "30/01\n2022", "10/03\n2024", "18/05\n2025",
+                ])
+                self.assertEqual(ax.get_ylim(), (0, 10))
+                for line in ax.lines:
+                    positions = list(line.get_xdata(orig=False))
+                    self.assertEqual([b - a for a, b in zip(positions, positions[1:])],
+                                     [1463, 847, 770, 434])
+                    expected = [row["Loss_pct"] for row in self.rows
+                                if row["District_label"] == line.get_label()]
+                    self.assertEqual(list(line.get_ydata()), expected)
+                self.assertEqual(graph.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+            finally:
+                plt.close(fig)
+
+    def test_run_creates_both_graphs_and_missing_dates_preserve_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "report.csv"
+            graph = Path(directory) / "graph.png"
+            time_graph = Path(directory) / "time_graph.png"
+            args = ["--csv", str(report), "--graph", str(graph), "--time-graph", str(time_graph)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(analysis.main(args), 0)
+            for output in (graph, time_graph):
+                self.assertEqual(output.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+            previous = {path: path.read_bytes() for path in (report, graph, time_graph)}
+            error = io.StringIO()
+            with patch.dict(analysis.ELECTION_DATES, {}, clear=True), \
+                    contextlib.redirect_stderr(error):
+                self.assertEqual(analysis.main(args), 1)
+            self.assertIn("Add verified election dates", error.getvalue())
+            self.assertEqual(previous, {path: path.read_bytes() for path in previous})
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(analysis.main([*args, "--time-graph", str(graph)]), 1)
+            self.assertEqual(previous, {path: path.read_bytes() for path in previous})
 
 
 if __name__ == "__main__":

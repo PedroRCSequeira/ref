@@ -5,6 +5,7 @@ Optional: python dist_mandatos.py path/to/data_Portugal.csv --output report.csv
 
 All totals exclude the four overseas seats. District weights are Inscritos or
 Eleitores. Party seats always use district d'Hondt on the supplied party votes.
+All source years must pass the shared mandate check before analysis starts.
 """
 
 import argparse
@@ -15,7 +16,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-from check_voters_mandates import DEFAULT_SOURCE, TOTAL_MANDATES, read_elections
+from auxiliary.district_validation import DEFAULT_SOURCE, TOTAL_MANDATES, load_validated_elections
 from export_site_map_metrics import load_elections
 
 
@@ -30,10 +31,11 @@ NOTES = (
     "Only supplied party vote columns can receive seats; omitted lists cannot be reconstructed from Totais.",
     "Exact quotient ties favor the smaller electorate/vote count, then alphabetical name if those counts also tie.",
     "Removal order runs from 225 down to 180; Change is the district's cumulative loss relative to 226 seats.",
+    "Lost a party? names a party that goes from 1 seat to 0 in that district at that step; '-' means none.",
 )
 CSV_FIELDS = (
     "Year", "Analysis", "Scenario", "Total_mandates", "District", "Party",
-    "Registered_voters", "Current_mandates", "New_mandates", "Change", "Step", "Notes",
+    "Registered_voters", "Current_mandates", "New_mandates", "Change", "Step", "Lost_party", "Notes",
 )
 
 
@@ -80,7 +82,7 @@ def party_totals(votes, district_seats, parties):
 
 
 def build_analysis(source):
-    voter_elections = read_elections(source)
+    voter_elections = load_validated_elections(source)
     elections, _ = load_elections(source)
     if set(elections) != set(voter_elections):
         raise ValueError("Voter and party data do not contain the same election years.")
@@ -89,9 +91,9 @@ def build_analysis(source):
         election = elections[year]
         voters = voter_elections[year]["voters"]
         current = voter_elections[year]["mandates"]
-        calculated, order = allocate_seats(voters)
-        if current != election["district_caps"] or current != calculated:
-            raise ValueError(f"{year}: stored Mandatos do not match 226-seat voter-based d'Hondt; run check_voters_mandates.py.")
+        if current != election["district_caps"]:
+            raise ValueError(f"{year}: voter and party data disagree about district mandates.")
+        _, order = allocate_seats(voters)
         scenarios = {
             SCENARIOS[0]: allocate_seats(voters, guaranteed=1)[0],
             SCENARIOS[1]: allocate_seats(voters, guaranteed=2)[0],
@@ -104,10 +106,17 @@ def build_analysis(source):
         removals = []
         for total in range(TOTAL_MANDATES - 1, 179, -1):
             district = order[total]
+            before, _ = allocate_seats(election["votes"][district], reduced[district])
             reduced[district] -= 1
+            after, _ = allocate_seats(election["votes"][district], reduced[district])
+            lost_party = next(
+                (party for party, seats in before.items() if seats == 1 and after[party] == 0),
+                "-",
+            )
             removals.append({
                 "district": district, "total": total, "new": reduced[district],
                 "change": reduced[district] - current[district],
+                "lost_party": lost_party,
             })
         allocations = {"Current": current, **scenarios}
         parties = {
@@ -148,8 +157,9 @@ def print_report(results):
         print_table(["District", "Current", *SCENARIOS], rows)
         print("\nOrdered losses as total mandates decrease (cumulative change):")
         print_table(
-            ["District", "Change", "Total mandates"],
-            [[loss["district"], f"{loss['change']:+d}", loss["total"]] for loss in data["removals"]],
+            ["District", "Change", "Total mandates", "Lost a party?"],
+            [[loss["district"], f"{loss['change']:+d}", loss["total"], loss["lost_party"]]
+             for loss in data["removals"]],
         )
         print("\nParty totals: each scenario shows mandates (change from current)")
         rows = []
@@ -184,7 +194,7 @@ def report_rows(results):
                 "Total_mandates": loss["total"], "District": district,
                 "Registered_voters": data["voters"][district],
                 "Current_mandates": data["current"][district], "New_mandates": loss["new"],
-                "Change": loss["change"], "Step": step,
+                "Change": loss["change"], "Step": step, "Lost_party": loss["lost_party"],
             }
         current = data["parties"]["Current"]
         for scenario in SCENARIOS:
@@ -215,6 +225,7 @@ def main(argv=None):
     except (OSError, ValueError, csv.Error) as exc:
         print(f"Analysis failed: {exc}", file=sys.stderr)
         return 1
+    print(f"Mandate validation passed for all {len(results)} election years.\n")
     print_report(results)
     print(f"\nCSV report saved to: {args.output.resolve()}")
     return 0

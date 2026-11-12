@@ -1,12 +1,15 @@
-"""Verify voter metadata isolation and the mandate checker's console contract."""
+"""Verify shared mandate validation and both analyses' automatic safeguards."""
 
 import contextlib
 import io
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-import check_voters_mandates as checker
+from auxiliary import district_validation as checker
+import dist_mandatos
+import small_districts_loss_analysis
 from data_parser import parse_stacked_country_file
 from export_site_map_metrics import build_export, validate_source_rows
 
@@ -31,33 +34,33 @@ class VoterMandateTests(unittest.TestCase):
             source = Path(directory) / "data_Portugal.csv"
             source.write_text(text, encoding="utf-8-sig")
             output, error = io.StringIO(), io.StringIO()
-            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
-                status = checker.main([str(source)])
-            self.assertEqual(source.read_text(encoding="utf-8-sig"), text)
-        return status, output.getvalue(), error.getvalue()
+            try:
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
+                    elections = checker.load_validated_elections(source)
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(error.getvalue(), "")
+            finally:
+                self.assertEqual(source.read_text(encoding="utf-8-sig"), text)
+        return elections
 
     def test_both_voter_headers_match_multiple_years(self):
         for header in ("Inscritos", "Eleitores"):
             with self.subTest(header=header):
                 text = self.source_text(header) + "\n,,,,,\n" + self.source_text(header, "2030")
-                status, output, error = self.run_check(text)
-                self.assertEqual(status, 0)
-                self.assertIn("2028: matches", output)
-                self.assertIn("2030: matches", output)
-                self.assertEqual(output.splitlines()[-1], "matches")
-                self.assertEqual(error, "")
+                elections = self.run_check(text)
+                self.assertEqual(list(elections), ["2028", "2030"])
+                self.assertEqual(elections["2028"]["mandates"], self.caps)
+                self.assertEqual(elections["2030"]["mandates"], self.caps)
 
     def test_mismatch_reports_each_district_even_when_total_is_226(self):
         text = self.source_text()
         text = text.replace("District 0,60,40,12", "District 0,60,40,11")
         text = text.replace("District 6,60,40,11", "District 6,60,40,12")
-        status, output, error = self.run_check(text)
-        self.assertEqual(status, 1)
-        self.assertIn("stored total: 226", output)
-        self.assertIn("District 0: stored=11, calculated=12", output)
-        self.assertIn("District 6: stored=12, calculated=11", output)
-        self.assertNotIn("matches", output)
-        self.assertEqual(error, "")
+        with self.assertRaises(ValueError) as error:
+            self.run_check(text)
+        self.assertIn("stored total: 226", str(error.exception))
+        self.assertIn("District 0: stored=11, calculated=12", str(error.exception))
+        self.assertIn("District 6: stored=12, calculated=11", str(error.exception))
 
     def test_invalid_or_incomplete_source_cannot_report_matches(self):
         valid = self.source_text()
@@ -71,10 +74,55 @@ class VoterMandateTests(unittest.TestCase):
         ))
         for text in cases:
             with self.subTest(text=text[:80]):
-                status, output, error = self.run_check(text)
-                self.assertEqual(status, 2)
-                self.assertEqual(output, "")
-                self.assertIn("Check failed:", error)
+                with self.assertRaises(ValueError):
+                    self.run_check(text)
+
+    def test_default_source_stays_in_repository_root(self):
+        self.assertEqual(checker.DEFAULT_SOURCE, Path(__file__).resolve().parents[1] / "data_Portugal.csv")
+
+    def test_both_analyses_stop_before_calculating_or_overwriting_outputs(self):
+        original = checker.DEFAULT_SOURCE.read_text(encoding="utf-8-sig")
+        corruptions = {
+            "seats": original.replace(",3,72041,118320", ",2,72041,118320").replace(
+                ",2,54688,90045", ",3,54688,90045"
+            ),
+            "voters": original.replace(",3,72041,118320", ",3,72041,117358"),
+        }
+        for fault, text in corruptions.items():
+            self.assertNotEqual(text, original)
+            for module, analysis_func in (
+                (dist_mandatos, "party_totals"),
+                (small_districts_loss_analysis, "minimum_voter_loss"),
+            ):
+                with self.subTest(fault=fault, script=module.__name__), tempfile.TemporaryDirectory() as directory:
+                    source = Path(directory) / "data_Portugal.csv"
+                    source.write_text(text, encoding="utf-8")
+                    report, graph = Path(directory) / "report.csv", Path(directory) / "graph.png"
+                    report.write_bytes(b"previous report")
+                    graph.write_bytes(b"previous graph")
+                    time_graph = Path(directory) / "time_graph.png"
+                    time_graph.write_bytes(b"previous time graph")
+                    args = [str(source)]
+                    if module is dist_mandatos:
+                        args += ["--output", str(report)]
+                    else:
+                        args += ["--csv", str(report), "--graph", str(graph), "--time-graph", str(time_graph)]
+                    output, error = io.StringIO(), io.StringIO()
+                    with patch.object(module, analysis_func) as calculate, \
+                            patch.object(small_districts_loss_analysis, "plot_margins") as plot, \
+                            contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
+                        status = module.main(args)
+                    self.assertEqual(status, 1)
+                    self.assertIn("Mandate validation failed", error.getvalue())
+                    self.assertIn("2025", error.getvalue())
+                    self.assertIn("Beja", error.getvalue())
+                    self.assertEqual(output.getvalue(), "")
+                    calculate.assert_not_called()
+                    plot.assert_not_called()
+                    self.assertEqual(report.read_bytes(), b"previous report")
+                    self.assertEqual(graph.read_bytes(), b"previous graph")
+                    self.assertEqual(time_graph.read_bytes(), b"previous time graph")
+                    self.assertEqual(source.read_text(encoding="utf-8"), text)
 
     def test_voter_column_anywhere_does_not_change_parser_inputs(self):
         with tempfile.TemporaryDirectory() as directory:

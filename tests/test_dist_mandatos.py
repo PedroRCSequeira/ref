@@ -16,6 +16,7 @@ class MandateDistributionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.results = analysis.build_analysis(analysis.DEFAULT_SOURCE)
+        cls.elections, _ = analysis.load_elections(analysis.DEFAULT_SOURCE)
 
     def test_guaranteed_seats_precede_a_fresh_allocation(self):
         weights = {"Large": 1000, "Small": 1}
@@ -78,6 +79,23 @@ class MandateDistributionTests(unittest.TestCase):
                     self.assertEqual(loss["new"], reduced[loss["district"]])
                     self.assertEqual(loss["change"], reduced[loss["district"]] - data["current"][loss["district"]])
 
+    def test_lost_party_compares_local_representation_at_each_step(self):
+        for year, data in self.results.items():
+            for loss in data["removals"]:
+                with self.subTest(year=year, total=loss["total"]):
+                    votes = self.elections[year]["votes"][loss["district"]]
+                    before = dhondt_apportion(votes, loss["new"] + 1)
+                    after = dhondt_apportion(votes, loss["new"])
+                    lost = [party for party in before if before[party] == 1 and after[party] == 0]
+                    self.assertLessEqual(len(lost), 1)
+                    self.assertEqual(loss["lost_party"], lost[0] if lost else "-")
+        # PAN disappears from Lisboa at 213, rather than every subsequent step.
+        lisboa = [loss for loss in self.results["2015"]["removals"] if loss["district"] == "Lisboa"]
+        pan_step = next(index for index, loss in enumerate(lisboa) if loss["total"] == 213)
+        self.assertEqual(lisboa[pan_step]["lost_party"], "PAN")
+        self.assertEqual(lisboa[pan_step + 1]["lost_party"], "-")
+        self.assertEqual(self.results["2025"]["removals"][0]["lost_party"], "AD")
+
     def test_cli_writes_utf8_csv_and_preserves_source(self):
         original = analysis.DEFAULT_SOURCE.read_bytes()
         with tempfile.TemporaryDirectory() as directory:
@@ -96,6 +114,8 @@ class MandateDistributionTests(unittest.TestCase):
                 losses = [r for r in rows if r["Year"] == year and r["Analysis"] == "Removal order"]
                 self.assertEqual(len(losses), 46)
                 self.assertEqual([int(r["Total_mandates"]) for r in losses], list(range(225, 179, -1)))
+                self.assertEqual([r["Lost_party"] for r in losses],
+                                 [loss["lost_party"] for loss in self.results[year]["removals"]])
                 for scenario in analysis.SCENARIOS:
                     parties = [r for r in rows if r["Year"] == year and r["Analysis"] == "Party totals" and r["Scenario"] == scenario]
                     self.assertEqual(sum(int(r["New_mandates"]) for r in parties), 226)
@@ -103,7 +123,8 @@ class MandateDistributionTests(unittest.TestCase):
             first_loss_row = messages.getvalue().split(
                 "Ordered losses as total mandates decrease (cumulative change):\n", 1
             )[1].splitlines()[1]
-            self.assertEqual(first_loss_row.split(), [*first["district"].split(), "-1", "225"])
+            self.assertIn("Lost a party?", messages.getvalue())
+            self.assertEqual(first_loss_row.split(), [*first["district"].split(), "-1", "225", first["lost_party"]])
             self.assertIn("Açores", output.read_text(encoding="utf-8-sig"))
         self.assertEqual(analysis.DEFAULT_SOURCE.read_bytes(), original)
 
