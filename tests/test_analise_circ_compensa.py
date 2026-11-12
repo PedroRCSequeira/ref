@@ -126,7 +126,7 @@ class CompensatoryAnalysisTests(unittest.TestCase):
         self.assertEqual(rows[1], ["A District", "1(-1)", "0", "0", "1(-1)"])
         self.assertEqual(rows[-3], ["District subtotal", "1(-1)", "9(-8)", "0", "10(-9)"])
         self.assertEqual(rows[-2], ["Compensatory circle", "9", "0", "0", "9"])
-        self.assertEqual(rows[-1], ["TOTAL (national target)", "1(+8)", "9(-8)", "0", "10"])
+        self.assertEqual(rows[-1], ["Total", "1(+8)", "9(-8)", "0", "10"])
         self.assertEqual(highlights, {(0, 2): analysis.YELLOW_BACKGROUND, (1, 1): analysis.RED_BACKGROUND})
 
     def test_district_loss_backgrounds_distinguish_complete_and_partial_losses(self):
@@ -167,6 +167,83 @@ class CompensatoryAnalysisTests(unittest.TestCase):
         reconstructed = " ".join(" ".join(line[7:67].split()) for line in lines[1:-1])
         self.assertEqual(reconstructed, losses)
 
+    def test_fixed_circle_matches_independent_constrained_quotients(self):
+        for year, minimum in self.results.items():
+            with self.subTest(year=year):
+                fixed = minimum["fixed"]
+                self.assertEqual(fixed["size"], 30)
+                self.assertEqual(sum(fixed["caps"].values()), 196)
+                votes = self.elections[year]["votes"]
+                caps = Counter(reference_order(self.electorates[year]["voters"], 196))
+                local_totals = Counter()
+                for district in votes:
+                    reference = Counter(reference_order(votes[district], caps[district]))
+                    self.assertEqual(fixed["caps"][district], caps[district])
+                    for party in minimum["parties"]:
+                        self.assertEqual(fixed["remaining"][district][party], reference[party])
+                    local_totals.update(reference)
+                national = {p: sum(row[p] for row in votes.values()) for p in minimum["parties"]}
+                pool = sorted((-Fraction(national[p], local_totals[p] + divisor), national[p], p)
+                              for p in minimum["parties"] if national[p] > 0
+                              for divisor in range(1, 31))
+                circle = Counter(p for _, _, p in pool[:30])
+                for party in minimum["parties"]:
+                    self.assertEqual(fixed["compensatory"][party], circle[party])
+                    final = local_totals[party] + circle[party]
+                    self.assertEqual(fixed["final_totals"][party], final)
+                    self.assertEqual(fixed["deviations"][party], final - minimum["targets"][party])
+                self.assertEqual(sum(fixed["final_totals"].values()), 226)
+                self.assertEqual(sum(fixed["compensatory"].values()), 30)
+                self.assertEqual(sum(fixed["deviations"].values()), 0)
+                self.assertEqual(any(fixed["deviations"].values()), minimum["size"] > 30)
+
+    def test_fixed_deviation_row_is_purple_only_when_needed(self):
+        for year, data in self.results.items():
+            with self.subTest(year=year):
+                sections = analysis.report_sections(data)
+                self.assertEqual(len(sections), 2)
+                title, headers, rows, highlights = sections[1]
+                self.assertEqual(title, "Fixed compensatory circle: 30 mandates")
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    analysis.print_table(headers, rows, highlights=highlights, color=True)
+                deviations = data["fixed"]["deviations"]
+                if any(deviations.values()):
+                    self.assertEqual(rows[-2][0], "Total")
+                    self.assertEqual(rows[-1], ["Difference vs national target",
+                                              *[f"{deviations[p]:+d}" if deviations[p] else "0" for p in data["parties"]], "0"])
+                    self.assertTrue(all(highlights[len(rows) - 1, col] == analysis.PURPLE_BACKGROUND
+                                        for col in range(len(headers))))
+                    self.assertEqual(output.getvalue().count(analysis.PURPLE_BACKGROUND), len(headers))
+                else:
+                    self.assertEqual(rows[-1][0], "Total")
+                    self.assertNotIn(analysis.PURPLE_BACKGROUND, output.getvalue())
+
+    def test_fixed_circle_zero_full_and_invalid_sizes(self):
+        minimum = self.multi_jump_case()
+        votes = {"Z District": {"B": 0, "A": 10, "Zero": 0},
+                 "A District": {"B": 100, "A": 0, "Zero": 0}}
+        voters = {"Z District": 9, "A District": 1}
+        zero = analysis.analyse_fixed_circle(votes, voters, minimum, 0)
+        self.assertEqual(zero["final_totals"], minimum["original_totals"])
+        self.assertEqual(zero["deviations"], {"B": -8, "A": 8, "Zero": 0})
+        full = analysis.analyse_fixed_circle(votes, voters, minimum, 10)
+        self.assertEqual(full["final_totals"], minimum["targets"])
+        self.assertEqual(sum(full["caps"].values()), 0)
+        for size in (-1, 11, 1.5, True):
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                analysis.analyse_fixed_circle(votes, voters, minimum, size)
+
+    def test_fixed_quotient_ties_follow_existing_rules(self):
+        votes = {"D": {"Large": 100, "Small": 10}}
+        minimum = analysis.analyse_election(votes, {"D": 1}, {"D": 10}, ["Large", "Small"], total=10)
+        fixed = analysis.analyse_fixed_circle(votes, {"D": 1}, minimum, 1)
+        self.assertEqual(fixed["compensatory"], {"Large": 0, "Small": 1})
+        votes = {"D": {"Z": 1, "A": 1}}
+        minimum = analysis.analyse_election(votes, {"D": 1}, {"D": 1}, ["Z", "A"], total=1)
+        fixed = analysis.analyse_fixed_circle(votes, {"D": 1}, minimum, 1)
+        self.assertEqual(fixed["compensatory"], {"Z": 0, "A": 1})
+
     def test_cli_csv_and_graph_are_complete_and_source_is_unchanged(self):
         original = analysis.DEFAULT_SOURCE.read_bytes()
         with tempfile.TemporaryDirectory() as directory:
@@ -179,6 +256,7 @@ class CompensatoryAnalysisTests(unittest.TestCase):
             self.assertTrue(graph.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
             self.assertIn(analysis.RED_BACKGROUND, messages.getvalue())
             self.assertIn(analysis.YELLOW_BACKGROUND, messages.getvalue())
+            self.assertIn(analysis.PURPLE_BACKGROUND, messages.getvalue())
             report_text = report.read_text(encoding="utf-8-sig")
             self.assertNotIn("\033", report_text)
             self.assertNotIn("Party district-seat losses", report_text)
@@ -187,19 +265,27 @@ class CompensatoryAnalysisTests(unittest.TestCase):
                 self.assertNotIn(removed, report_text)
                 self.assertNotIn(removed, messages.getvalue())
             self.assertNotIn("(0)", report_text)
+            self.assertNotIn("TOTAL (national target)", report_text)
             with report.open(encoding="utf-8-sig", newline="") as stream:
                 rows = list(csv.reader(stream))
+            headings = [f"{year} - Minimum compensatory circle: {data['size']} mandates"
+                        for year, data in self.results.items()]
             for year, data in self.results.items():
-                start = rows.index(["Year", year])
-                self.assertEqual(rows[start + 1], ["Minimum compensatory mandates", str(data["size"])])
-                next_year = next((i for i in range(start + 1, len(rows)) if rows[i][:1] == ["Year"]), len(rows))
+                heading = f"{year} - Minimum compensatory circle: {data['size']} mandates"
+                start = rows.index([heading])
+                next_year = next((i for i in range(start + 1, len(rows))
+                                  if len(rows[i]) == 1 and rows[i][0] in headings), len(rows))
                 block = rows[start:next_year]
                 headers, matrix, _ = analysis.matrix_table(data)
                 matrix_start = block.index(headers)
                 self.assertEqual(block[matrix_start + 1:matrix_start + 1 + len(matrix)], matrix)
                 circle = next(row for row in block if row[:1] == ["Compensatory circle"])
                 self.assertEqual(circle[1:], [str(data["compensatory"][p]) for p in data["parties"]] + [str(data["size"])])
-                self.assertIn(f"\n{year}\n", messages.getvalue())
+                fixed_start = block.index(["Fixed compensatory circle: 30 mandates"])
+                fixed_headers, fixed_matrix, _ = analysis.report_sections(data)[1][1:]
+                self.assertEqual(block[fixed_start + 1], fixed_headers)
+                self.assertEqual(block[fixed_start + 2:fixed_start + 2 + len(fixed_matrix)], fixed_matrix)
+                self.assertIn(f"\n{heading}\n", messages.getvalue())
             self.assertIn("A\u00e7ores", report.read_text(encoding="utf-8-sig"))
         self.assertEqual(analysis.DEFAULT_SOURCE.read_bytes(), original)
 

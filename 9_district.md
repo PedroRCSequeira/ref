@@ -110,20 +110,41 @@ a district may reach zero seats. The overall total always remains 226.
 
 Each election's console and CSV report contains:
 
-- The minimum circle size.
+- A single-line heading such as `2015 - Minimum compensatory circle: 23 mandates`.
+- The minimum-size matrix followed by a fixed-size matrix, defaulting to a
+  30-mandate circle and 196 district mandates. Override this with `--fixed-size`.
 - A source-ordered district-by-party matrix with `original(change)` cells
   and district totals. For example, `6(-1)` means six original seats with one
   lost, leaving five; unchanged values have no parentheses. `District subtotal`
   shows local party totals and their changes; the separate `Compensatory circle`
   row shows plain final seat counts (for example, `7`, with no signs or
-  parentheses); the final `TOTAL` row compares original totals with
+  parentheses); the `Total` row compares original totals with
   final totals including compensation using the same signed-change notation.
-  Original plus change exactly matches each national target. Do not add the
-  subtotal to district rows.
+  Original plus change exactly matches each national target in the minimum
+  scenario. Do not add the subtotal to district rows.
+
+For the fixed scenario, first redistribute 226 minus the chosen circle size
+by electorate d'Hondt, then allocate party seats within each district. Award
+the circle seats one at a time using national party votes divided by
+`district party seats + compensatory seats already awarded + 1`, with the same
+exact tie rule. This continues national d'Hondt while retaining every district
+seat; it is not an independent fresh d'Hondt allocation of just the circle.
+When the circle is sufficient it exactly reproduces the national targets.
+When district overhangs make that impossible, all circle seats are still
+awarded and the final total stays 226. The `Total` row always shows the actual
+district-plus-circle allocation.
+
+If the fixed scenario deviates from the national target, append a purple
+`Difference vs national target` row directly below `Total`, using the same party
+columns. A positive number means extra seats relative to the national target;
+a negative number means a shortfall. The differences sum to zero. Omit this row
+when all party totals match. It compares with the national target, whereas
+parentheses elsewhere compare with the original district allocation.
 
 Red backgrounds highlight district-party cells that go from positive to zero;
 yellow backgrounds highlight partial seat losses with representation retained.
-Unchanged cells, district totals, subtotals, and national totals are uncolored.
+Unchanged cells, district totals, subtotals, and national totals are uncolored;
+the entire deviation row uses a purple background when present.
 The matrix replaces the separate district and party loss sections. Losing local
 representation does not mean losing national representation. Colors appear in
 an interactive terminal, including VS Code's integrated terminal. Use

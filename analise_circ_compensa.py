@@ -14,6 +14,7 @@ import os
 import sys
 import textwrap
 from itertools import zip_longest
+from fractions import Fraction
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -26,19 +27,22 @@ from export_site_map_metrics import load_elections
 ROOT = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT / "analise_circ_compensa.csv"
 DEFAULT_GRAPH = ROOT / "TREND_Compensatory_Circle_Size.png"
+FIXED_CIRCLE_SIZE = 30
 RED_BACKGROUND = "\033[41;97m"
 YELLOW_BACKGROUND = "\033[43;30m"
+PURPLE_BACKGROUND = "\033[45;97m"
 RESET_COLOR = "\033[0m"
 NOTES = (
     "226 domestic mandates only; the four overseas mandates are excluded.",
     "National targets: d'Hondt on the sum of the supplied domestic party votes; coalition names remain unchanged.",
     "Remaining district mandates: d'Hondt on Inscritos/Eleitores; party seats: d'Hondt separately in each district.",
     "Start at C=0; add the sum of positive district-party excesses to C until no party exceeds its national target.",
-    "Compensatory seats equal national target minus remaining district seats, rather than a fresh allocation of C seats.",
+    "Minimum scenario: compensatory seats equal national target minus remaining district seats.",
+    "Fixed scenario: continue national d'Hondt using national votes / (district seats + circle seats awarded + 1).",
     "Exact quotient ties favor smaller electorate/vote counts, then alphabetical name if those counts also tie.",
     "Only supplied party columns are used; votes for omitted lists cannot be reconstructed from Totais.",
     "Cells show original(change) mandates with signed changes; unchanged cells omit parentheses; the circle row shows final counts only.",
-    "The TOTAL row includes district and compensatory mandates and matches each party's national target.",
+    "Total includes district and compensatory mandates. Purple differences compare the fixed scenario with national targets.",
     "District party cells: red means all local representation lost; yellow means some seats lost with representation retained.",
 )
 
@@ -127,12 +131,49 @@ def analyse_election(votes, voters, current_caps, parties, *, total=TOTAL_MANDAT
         "current_caps": current_caps.copy(), "caps": caps,
         "original": original, "remaining": remaining,
         "original_totals": original_totals, "district_totals": district_totals,
-        "targets": targets, "compensatory": compensatory,
+        "targets": targets, "compensatory": compensatory, "final_totals": targets.copy(),
         "steps": steps, "previous_excess": previous_excess,
     }
 
 
-def build_analysis(source=DEFAULT_SOURCE):
+def analyse_fixed_circle(votes, voters, baseline, size=FIXED_CIRCLE_SIZE):
+    """Allocate a fixed circle by national d'Hondt with district-seat floors.
+
+    District seats cannot be taken back. Continuing national quotients from
+    those seats reproduces the national target whenever it is feasible, and
+    awards the entire circle even when district overhangs prevent that match.
+    """
+    total, parties = baseline["total"], baseline["parties"]
+    if type(size) is not int or not 0 <= size <= total:
+        raise ValueError(f"Fixed circle size must be an integer between 0 and {total}.")
+    allocated, _ = allocate_seats(voters, total - size)
+    caps = {district: allocated[district] for district in baseline["current_caps"]}
+    remaining, district_totals = district_allocation(votes, caps, parties)
+    national_votes = {party: sum(row[party] for row in votes.values()) for party in parties}
+    active = sorted(party for party in parties if national_votes[party] > 0)
+    if size and not active:
+        raise ValueError("Cannot allocate compensatory mandates without positive party votes.")
+    compensatory = dict.fromkeys(parties, 0)
+    for _ in range(size):
+        winner = max(active, key=lambda party: (
+            Fraction(national_votes[party], district_totals[party] + compensatory[party] + 1),
+            -national_votes[party],
+        ))
+        compensatory[winner] += 1
+    final_totals = {p: district_totals[p] + compensatory[p] for p in parties}
+    deviations = {p: final_totals[p] - baseline["targets"][p] for p in parties}
+    if sum(compensatory.values()) != size or sum(final_totals.values()) != total or sum(deviations.values()) != 0:
+        raise ValueError("Fixed district and compensatory allocations do not match the national total.")
+    if size >= baseline["size"] and any(deviations.values()):
+        raise ValueError("A sufficient fixed circle unexpectedly differs from the national target.")
+    return {
+        **{key: baseline[key] for key in ("total", "parties", "current_caps", "original", "original_totals", "targets")},
+        "size": size, "caps": caps, "remaining": remaining, "district_totals": district_totals,
+        "compensatory": compensatory, "final_totals": final_totals, "deviations": deviations,
+    }
+
+
+def build_analysis(source=DEFAULT_SOURCE, *, fixed_size=FIXED_CIRCLE_SIZE):
     # Validate every year before calculating any scenario or writing outputs.
     voter_elections = load_validated_elections(source)
     elections, _ = load_elections(source)
@@ -145,6 +186,9 @@ def build_analysis(source=DEFAULT_SOURCE):
             raise ValueError(f"{year}: voter and party data disagree about district mandates.")
         results[year] = analyse_election(
             data["votes"], electorate["voters"], electorate["mandates"], data["parties_list"],
+        )
+        results[year]["fixed"] = analyse_fixed_circle(
+            data["votes"], electorate["voters"], results[year], fixed_size,
         )
     return results
 
@@ -178,8 +222,8 @@ def matrix_table(data):
         str(data["size"]),
     ])
     rows.append([
-        "TOTAL (national target)",
-        *[seat_cell(data["original_totals"][p], data["targets"][p]) for p in parties],
+        "Total",
+        *[seat_cell(data["original_totals"][p], data["final_totals"][p]) for p in parties],
         seat_cell(data["total"], data["total"]),
     ])
     return headers, rows, highlighted
@@ -187,9 +231,22 @@ def matrix_table(data):
 
 def report_sections(data):
     headers, rows, highlights = matrix_table(data)
-    return (
+    sections = [
         ("Mandate matrix: original(change); circle shows final seats", headers, rows, highlights),
-    )
+    ]
+    if "fixed" in data:
+        fixed = data["fixed"]
+        headers, rows, highlights = matrix_table(fixed)
+        if any(fixed["deviations"].values()):
+            row_index = len(rows)
+            rows.append([
+                "Difference vs national target",
+                *[f"{fixed['deviations'][p]:+d}" if fixed["deviations"][p] else "0" for p in fixed["parties"]],
+                "0",
+            ])
+            highlights.update({(row_index, column): PURPLE_BACKGROUND for column in range(len(headers))})
+        sections.append((f"Fixed compensatory circle: {fixed['size']} mandates", headers, rows, highlights))
+    return sections
 
 
 def print_table(headers, rows, *, highlights=None, color=False, max_width=60):
@@ -219,8 +276,7 @@ def print_report(results, *, color=False):
     for note in NOTES:
         print(f"- {note}")
     for year, data in results.items():
-        print(f"\n{year}\n")
-        print(f"Minimum compensatory circle: {data['size']} mandates")
+        print(f"\n{year} - Minimum compensatory circle: {data['size']} mandates")
         for title, headers, rows, highlights in report_sections(data):
             print(f"\n{title}")
             print_table(headers, rows, highlights=highlights, color=color)
@@ -235,8 +291,7 @@ def write_report(results, path):
             writer.writerow(["Note", note])
         for year, data in results.items():
             writer.writerow([])
-            writer.writerow(["Year", year])
-            writer.writerow(["Minimum compensatory mandates", data["size"]])
+            writer.writerow([f"{year} - Minimum compensatory circle: {data['size']} mandates"])
             for title, headers, rows, _ in report_sections(data):
                 writer.writerow([])
                 writer.writerow([title])
@@ -280,6 +335,8 @@ def main(argv=None):
     parser.add_argument("source", nargs="?", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--csv", "--output", dest="csv", type=Path, default=DEFAULT_CSV)
     parser.add_argument("--graph", type=Path, default=DEFAULT_GRAPH)
+    parser.add_argument("--fixed-size", type=int, default=FIXED_CIRCLE_SIZE,
+                        help="Size of the fixed compensatory circle shown below each minimum scenario (default: 30).")
     parser.add_argument("--color", choices=("auto", "always", "never"), default="auto",
                         help="Red for complete district-party losses, yellow for partial losses; auto colors terminal output.")
     args = parser.parse_args(argv)
@@ -287,7 +344,7 @@ def main(argv=None):
         paths = [path.resolve() for path in (args.source, args.csv, args.graph)]
         if len(set(paths)) != len(paths):
             raise ValueError("Source, CSV report, and graph must use distinct paths.")
-        results = build_analysis(args.source)
+        results = build_analysis(args.source, fixed_size=args.fixed_size)
         plot_sizes(results, args.graph)
         write_report(results, args.csv)
     except (OSError, ValueError, csv.Error, ImportError) as exc:
