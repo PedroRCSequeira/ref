@@ -37,7 +37,8 @@ NOTES = (
     "Compensatory seats equal national target minus remaining district seats, rather than a fresh allocation of C seats.",
     "Exact quotient ties favor smaller electorate/vote counts, then alphabetical name if those counts also tie.",
     "Only supplied party columns are used; votes for omitted lists cannot be reconstructed from Totais.",
-    "Cells show original(change) mandates with signed changes; unchanged cells omit parentheses; final totals include the circle.",
+    "Cells show original(change) mandates with signed changes; unchanged cells omit parentheses; the circle row shows final counts only.",
+    "The TOTAL row includes district and compensatory mandates and matches each party's national target.",
     "District party cells: red means all local representation lost; yellow means some seats lost with representation retained.",
 )
 
@@ -173,8 +174,8 @@ def matrix_table(data):
         seat_cell(data["total"], data["total"] - data["size"]),
     ])
     rows.append([
-        "Compensatory circle", *[seat_cell(0, data["compensatory"][p]) for p in parties],
-        seat_cell(0, data["size"]),
+        "Compensatory circle", *[str(data["compensatory"][p]) for p in parties],
+        str(data["size"]),
     ])
     rows.append([
         "TOTAL (national target)",
@@ -184,24 +185,10 @@ def matrix_table(data):
     return headers, rows, highlighted
 
 
-def district_losses(data):
-    districts = data["current_caps"]
-    parties = data["parties"]
-    district_rows = []
-    for district in districts:
-        loss = districts[district] - data["caps"][district]
-        if loss:
-            excluded = [p for p in parties if data["original"][district][p] > 0
-                        and data["remaining"][district][p] == 0]
-            district_rows.append([district, f"-{loss}", ", ".join(excluded) or "-"])
-    return district_rows
-
-
 def report_sections(data):
     headers, rows, highlights = matrix_table(data)
     return (
-        ("Mandate matrix: original(change); TOTAL includes compensation", headers, rows, highlights),
-        ("Districts losing mandates", ["District", "Change", "Lost local representation"], district_losses(data), {}),
+        ("Mandate matrix: original(change); circle shows final seats", headers, rows, highlights),
     )
 
 
@@ -234,7 +221,6 @@ def print_report(results, *, color=False):
     for year, data in results.items():
         print(f"\n{year}\n")
         print(f"Minimum compensatory circle: {data['size']} mandates")
-        print(f"District mandates: {data['total'] - data['size']}; final national total: {data['total']}")
         for title, headers, rows, highlights in report_sections(data):
             print(f"\n{title}")
             print_table(headers, rows, highlights=highlights, color=color)
@@ -251,8 +237,6 @@ def write_report(results, path):
             writer.writerow([])
             writer.writerow(["Year", year])
             writer.writerow(["Minimum compensatory mandates", data["size"]])
-            writer.writerow(["District mandates", data["total"] - data["size"]])
-            writer.writerow(["Final national mandates", data["total"]])
             for title, headers, rows, _ in report_sections(data):
                 writer.writerow([])
                 writer.writerow([title])

@@ -12,7 +12,7 @@ repository root and run from their existing locations.
 | --- | --- | --- |
 | `dist_mandatos.py` | Compare one- and two-seat initial bonuses, Sainte-Lague, and equalized districts; list cumulative seat losses as the total falls from 225 to 180. | Console tables and `dist_mandatos_excel.csv`. |
 | `small_districts_loss_analysis.py` | Measure the minimum electorate loss that would cost a small district one mandate, for every election since 2015. | Console table, `small_districts_loss_analysis.csv`, and two graphs (equal election spacing and proportional date spacing). |
-| `analise_circ_compensa.py` | Find the minimum compensatory national circle that reproduces the 226-seat national d'Hondt party totals. | Console matrices and loss tables, `analise_circ_compensa.csv`, and `TREND_Compensatory_Circle_Size.png`. |
+| `analise_circ_compensa.py` | Find the minimum compensatory national circle that reproduces the 226-seat national d'Hondt party totals. | Console matrices, `analise_circ_compensa.csv`, and `TREND_Compensatory_Circle_Size.png`. |
 
 Run a script from the repository root:
 
@@ -110,28 +110,27 @@ a district may reach zero seats. The overall total always remains 226.
 
 Each election's console and CSV report contains:
 
-- The minimum circle size and remaining district-seat total.
+- The minimum circle size.
 - A source-ordered district-by-party matrix with `original(change)` cells
   and district totals. For example, `6(-1)` means six original seats with one
   lost, leaving five; unchanged values have no parentheses. `District subtotal`
   shows local party totals and their changes; the separate `Compensatory circle`
-  row shows `0(+added)`; the final `TOTAL` row compares original totals with
+  row shows plain final seat counts (for example, `7`, with no signs or
+  parentheses); the final `TOTAL` row compares original totals with
   final totals including compensation using the same signed-change notation.
   Original plus change exactly matches each national target. Do not add the
   subtotal to district rows.
-- Only districts losing mandates, with cumulative losses and parties whose
-  original positive district representation falls to zero, in source order.
 
 Red backgrounds highlight district-party cells that go from positive to zero;
 yellow backgrounds highlight partial seat losses with representation retained.
 Unchanged cells, district totals, subtotals, and national totals are uncolored.
-The matrix replaces the separate party district-seat loss section. Losing local
+The matrix replaces the separate district and party loss sections. Losing local
 representation does not mean losing national representation. Colors appear in
 an interactive terminal, including VS Code's integrated terminal. Use
 `--color always` to force ANSI color or `--color never` to disable it. Automatic
 color respects `NO_COLOR` and is disabled for redirected output. The UTF-8 BOM
-CSV contains the same tables without ANSI escapes or formatting; the separate
-loss tables preserve the representation-loss information in plain text.
+CSV contains the same matrices without ANSI escapes or formatting. Original
+seats and their changes retain the loss information in plain text.
 
 The PNG graph uses equally spaced election years and labels each minimum in
 mandates. All outputs live beside the script and are visually nested under

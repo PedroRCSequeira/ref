@@ -118,18 +118,16 @@ class CompensatoryAnalysisTests(unittest.TestCase):
         self.assertEqual(seats, {"Large": 9, "Small": 1})
         self.assertEqual(analysis.allocate_seats({"Z": 1, "A": 1}, 1)[0], {"A": 1, "Z": 0})
 
-    def test_source_order_compensatory_row_and_loss_details(self):
+    def test_source_order_and_plain_compensatory_counts(self):
         data = self.multi_jump_case()
         headers, rows, highlights = analysis.matrix_table(data)
         self.assertEqual(headers, ["District", "B", "A", "Zero", "Mandatos"])
         self.assertEqual(rows[0], ["Z District", "0", "9(-8)", "0", "9(-8)"])
         self.assertEqual(rows[1], ["A District", "1(-1)", "0", "0", "1(-1)"])
         self.assertEqual(rows[-3], ["District subtotal", "1(-1)", "9(-8)", "0", "10(-9)"])
-        self.assertEqual(rows[-2], ["Compensatory circle", "0(+9)", "0", "0", "0(+9)"])
+        self.assertEqual(rows[-2], ["Compensatory circle", "9", "0", "0", "9"])
         self.assertEqual(rows[-1], ["TOTAL (national target)", "1(+8)", "9(-8)", "0", "10"])
         self.assertEqual(highlights, {(0, 2): analysis.YELLOW_BACKGROUND, (1, 1): analysis.RED_BACKGROUND})
-        districts = analysis.district_losses(data)
-        self.assertEqual(districts, [["Z District", "-8", "-"], ["A District", "-1", "B"]])
 
     def test_district_loss_backgrounds_distinguish_complete_and_partial_losses(self):
         data = self.multi_jump_case()
@@ -150,9 +148,12 @@ class CompensatoryAnalysisTests(unittest.TestCase):
         votes = {"D1": {"Z": 1, "A": 1, "R": 1}, "D2": {"Z": 0, "A": 0, "R": 100}}
         data = analysis.analyse_election(votes, {"D1": 3, "D2": 2},
                                         {"D1": 3, "D2": 2}, ["Z", "A", "R"], total=5)
-        districts = analysis.district_losses(data)
-        self.assertEqual(districts[0], ["D1", "-3", "Z, A, R"])
-        self.assertEqual(districts[1], ["D2", "-2", "R"])
+        headers, rows, highlights = analysis.matrix_table(data)
+        self.assertEqual(headers, ["District", "Z", "A", "R", "Mandatos"])
+        self.assertEqual(rows[0], ["D1", "1(-1)", "1(-1)", "1(-1)", "3(-3)"])
+        self.assertEqual(rows[1], ["D2", "0", "0", "2(-2)", "2(-2)"])
+        self.assertEqual(highlights, {cell: analysis.RED_BACKGROUND
+                                     for cell in ((0, 1), (0, 2), (0, 3), (1, 3))})
 
     def test_long_loss_lists_wrap_without_losing_information(self):
         losses = "; ".join(f"District {i} (-1)" for i in range(12))
@@ -182,6 +183,9 @@ class CompensatoryAnalysisTests(unittest.TestCase):
             self.assertNotIn("\033", report_text)
             self.assertNotIn("Party district-seat losses", report_text)
             self.assertNotIn("Party district-seat losses", messages.getvalue())
+            for removed in ("Districts losing mandates", "District mandates", "Final national mandates", "final national total"):
+                self.assertNotIn(removed, report_text)
+                self.assertNotIn(removed, messages.getvalue())
             self.assertNotIn("(0)", report_text)
             with report.open(encoding="utf-8-sig", newline="") as stream:
                 rows = list(csv.reader(stream))
@@ -193,6 +197,8 @@ class CompensatoryAnalysisTests(unittest.TestCase):
                 headers, matrix, _ = analysis.matrix_table(data)
                 matrix_start = block.index(headers)
                 self.assertEqual(block[matrix_start + 1:matrix_start + 1 + len(matrix)], matrix)
+                circle = next(row for row in block if row[:1] == ["Compensatory circle"])
+                self.assertEqual(circle[1:], [str(data["compensatory"][p]) for p in data["parties"]] + [str(data["size"])])
                 self.assertIn(f"\n{year}\n", messages.getvalue())
             self.assertIn("A\u00e7ores", report.read_text(encoding="utf-8-sig"))
         self.assertEqual(analysis.DEFAULT_SOURCE.read_bytes(), original)
